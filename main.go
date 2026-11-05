@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
+	"strings"
 
+	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
 	"github.com/ha1tch/zen80/io"
@@ -14,35 +17,11 @@ import (
 )
 
 func main() {
+	/****************************************************************/
+	/***********      Set up Z80 emulator    ************************/
+	/****************************************************************/
 	programPath := flag.String("program", "", "path to a raw Z80 binary to run")
 	flag.Parse()
-
-	newPrimitive := func(text string) tview.Primitive {
-		return tview.NewTextView().
-			SetTextAlign(tview.AlignCenter).
-			SetText(text)
-	}
-	menu := newPrimitive("Menu")
-	main := newPrimitive("Main content")
-	sideBar := newPrimitive("Side Bar")
-	footer := tview.NewTextView().SetTextAlign(tview.AlignCenter)
-
-	grid := tview.NewGrid().
-		SetRows(3, 0, 3).
-		SetColumns(30, 0, 30).
-		SetBorders(true).
-		AddItem(newPrimitive("Header"), 0, 0, 1, 3, 0, 0, false).
-		AddItem(footer, 2, 0, 1, 3, 0, 0, false)
-
-	// Layout for screens narrower than 100 cells (menu and side bar are hidden).
-	grid.AddItem(menu, 0, 0, 0, 0, 0, 0, false).
-		AddItem(main, 1, 0, 1, 3, 0, 0, false).
-		AddItem(sideBar, 0, 0, 0, 0, 0, 0, false)
-
-	// Layout for screens wider than 100 cells.
-	grid.AddItem(menu, 1, 0, 1, 1, 0, 100, false).
-		AddItem(main, 1, 1, 1, 1, 0, 100, false).
-		AddItem(sideBar, 1, 2, 1, 1, 0, 100, false)
 
 	// Create memory and I/O
 	mem := memory.NewRAM()
@@ -61,24 +40,283 @@ func main() {
 		if err != nil {
 			log.Fatal(err)
 		}
+		fmt.Printf("Loaded program %q (%d bytes)\n", *programPath, len(program))
 	}
-	mem.Load(0x0000, program)
-
-	// Create and run CPU
+	startAddress := uint16(0)
+	displayAddress := startAddress
+	mem.Load(startAddress, program)
 	cpu := z80.New(mem, io)
+
+	/****************************************************************/
+	/********************      Set up GUI    ************************/
+	/****************************************************************/
+	app := tview.NewApplication()
+
+	cmds := tview.NewTextView().
+		SetText("Select command and press Enter.").
+		SetDynamicColors(true)
+	cmds.SetBorder(true).SetTitle("Commands")
+
+	//processorMemory := viewgrid("Memory")
+	processorMemory := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetDynamicColors(true).
+		SetWrap(false).
+		SetScrollable(false)
+	processorMemory.SetBorder(true).SetTitle("Memory")
+
+	registers := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetDynamicColors(true)
+	registers.SetBorder(true).SetTitle("Registers")
+
+	stack := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetDynamicColors(true).
+		SetWrap(false).
+		SetScrollable(false)
+	stack.SetBorder(true).SetTitle("Stack")
+
+	status := tview.NewTextView().SetTextAlign(tview.AlignLeft)
+	status.SetText(fmt.Sprintf("CPU status: ")).SetTextColor(tcell.ColorRed)
+
+	pages := tview.NewPages()
+	var buttons *tview.Form
+	addressInput := tview.NewInputField().
+		SetLabel("Program start address (4 hex digits): ").
+		SetPlaceholder(fmt.Sprintf("%04X", startAddress)).
+		SetFieldWidth(4).
+		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
+			return isHexAddressInput(textToCheck)
+		})
+	addressForm := tview.NewForm().
+		AddFormItem(addressInput).
+		AddButton("Load", func() {
+			text := addressInput.GetText()
+			address, err := strconv.ParseUint(text, 16, 16)
+			if len(text) != 4 || err != nil {
+				status.SetText("Address must be exactly four hexadecimal digits.")
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+			if len(program) > (1<<16)-int(address) {
+				status.SetText("Program does not fit in memory at that starting address.")
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+
+			startAddress = uint16(address)
+			displayAddress = startAddress
+			mem.Clear()
+			mem.Load(startAddress, program)
+			cpu.Reset()
+			cpu.PC = startAddress
+			processorMemory.Clear()
+			status.SetText(fmt.Sprintf("Program loaded at address %04X.", startAddress))
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		})
+	addressForm.SetBorder(true).SetTitle("Set Starting Address")
+	addressForm.SetCancelFunc(func() {
+		pages.SwitchToPage("main")
+		app.SetFocus(buttons)
+	})
+
+	programPathInput := tview.NewInputField().
+		SetLabel("Z80 binary path: ").
+		SetFieldWidth(60)
+	loadProgramForm := tview.NewForm().
+		AddFormItem(programPathInput).
+		AddButton("Load", func() {
+			path := strings.TrimSpace(programPathInput.GetText())
+			if path == "" {
+				status.SetText("Enter the path to a Z80 binary file.")
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+
+			loadedProgram, err := loadProgramFromFile(path)
+			if err != nil {
+				status.SetText(err.Error())
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+			if len(loadedProgram) > (1<<16)-int(startAddress) {
+				status.SetText(fmt.Sprintf("Program does not fit in memory at address %04X.", startAddress))
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+
+			program = loadedProgram
+			mem.Clear()
+			mem.Load(startAddress, program)
+			cpu.Reset()
+			cpu.PC = startAddress
+			processorMemory.Clear()
+			registers.Clear()
+			refreshMemoryDump(processorMemory, mem, displayAddress)
+			status.SetText(fmt.Sprintf("Loaded %q at address %04X (%d bytes).", path, startAddress, len(program)))
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		})
+	loadProgramForm.SetBorder(true).SetTitle("Load Z80 Program")
+	loadProgramForm.SetCancelFunc(func() {
+		pages.SwitchToPage("main")
+		app.SetFocus(buttons)
+	})
+
+	displayAddressInput := tview.NewInputField().
+		SetLabel("Memory display address (4 hex digits): ").
+		SetPlaceholder(fmt.Sprintf("%04X", displayAddress)).
+		SetFieldWidth(4).
+		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
+			return isHexAddressInput(textToCheck)
+		})
+	displayAddressForm := tview.NewForm().
+		AddFormItem(displayAddressInput).
+		AddButton("Display", func() {
+			text := displayAddressInput.GetText()
+			address, err := strconv.ParseUint(text, 16, 16)
+			if len(text) != 4 || err != nil {
+				status.SetText("Address must be exactly four hexadecimal digits.")
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+
+			displayAddress = uint16(address)
+			refreshMemoryDump(processorMemory, mem, displayAddress)
+			status.SetText(fmt.Sprintf("Displaying memory from address %04X.", displayAddress))
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		})
+	displayAddressForm.SetBorder(true).SetTitle("Set Memory Display Address")
+	displayAddressForm.SetCancelFunc(func() {
+		pages.SwitchToPage("main")
+		app.SetFocus(buttons)
+	})
+
+	// Two buttons inside one grid cell.
+	buttons = tview.NewForm().SetButtonsAlign(tview.AlignLeft).SetButtonBackgroundColor(tcell.ColorBlack).
+		AddButton("[blue]Step", func() {
+			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress)
+		}).
+		AddButton("[green]Run", func() {
+			runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress)
+		}).
+		AddButton("[yellow]Reset", func() {
+			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, startAddress)
+		}).
+		AddButton("[red]Quit", func() {
+			app.Stop()
+		}).
+		AddButton("[white]Program Load Address", func() {
+			addressInput.SetText("")
+			addressInput.SetPlaceholder(fmt.Sprintf("%04X", startAddress))
+			addressForm.SetFocus(0)
+			pages.SwitchToPage("address")
+			app.SetFocus(addressForm)
+		}).
+		AddButton("[white]Memory Display Address", func() {
+			displayAddressInput.SetText("")
+			displayAddressInput.SetPlaceholder(fmt.Sprintf("%04X", displayAddress))
+			displayAddressForm.SetFocus(0)
+			pages.SwitchToPage("displayAddress")
+			app.SetFocus(displayAddressForm)
+		}).
+		AddButton("[white]Load Program", func() {
+			programPathInput.SetText("")
+			loadProgramForm.SetFocus(0)
+			pages.SwitchToPage("loadProgram")
+			app.SetFocus(loadProgramForm)
+		}).
+		SetButtonActivatedStyle(
+			tcell.StyleDefault.
+				Foreground(tcell.ColorBlack).
+				Background(tcell.ColorYellow),
+		)
+
+	grid := tview.NewGrid().
+		SetRows(3, 0, 3).
+		SetColumns(75, 32, -4).
+		SetBorders(true).
+		// AddItem(viewgrid("Commands"), 0, 0, 1, 3, 0, 0, false).
+		AddItem(buttons, 0, 0, 1, 3, 0, 0, true).
+		AddItem(status, 2, 0, 1, 3, 0, 0, false)
+
+	// Layout for screens narrower than 100 cells (processorMemory and stack are hidden).
+	grid.AddItem(processorMemory, 0, 0, 0, 0, 0, 0, false).
+		AddItem(registers, 1, 0, 1, 3, 0, 0, false).
+		AddItem(stack, 0, 0, 0, 0, 0, 0, false)
+
+	// Layout for screens wider than 100 cells.
+	grid.AddItem(processorMemory, 1, 0, 1, 1, 0, 100, false).
+		AddItem(registers, 1, 1, 1, 1, 0, 100, false).
+		AddItem(stack, 1, 2, 1, 1, 0, 100, false)
+
+	pages.AddPage("main", grid, true, true).
+		AddPage("address", addressForm, true, false).
+		AddPage("loadProgram", loadProgramForm, true, false).
+		AddPage("displayAddress", displayAddressForm, true, false)
+
+	if err := app.SetRoot(pages, true).
+		SetFocus(grid).
+		EnableMouse(true).
+		Run(); err != nil {
+		log.Fatal(err)
+	}
 	for !cpu.Halted {
 		cpu.Step()
 	}
+}
 
-	// Result is in register A
-	fmt.Printf("Result: %d\n", cpu.A) // Prints to terminal, but we also want to show it in the footer of the UI
-
-	footer.SetText(fmt.Sprintf("Result: %d", cpu.A))
-
-	app := tview.NewApplication().SetRoot(grid, true).SetFocus(grid)
-	if err := app.Run(); err != nil {
-		log.Fatal(err)
+func refreshMemoryDump(view *tview.TextView, mem *memory.RAM, startAddress uint16) {
+	const bytesPerRow = 16
+	_, _, _, height := view.GetInnerRect()
+	length := height * bytesPerRow
+	if remaining := (1 << 16) - int(startAddress); length > remaining {
+		length = remaining
 	}
+
+	view.Clear()
+	memorydump(view, mem, startAddress, length)
+}
+
+func refreshStackDump(view *tview.TextView, mem *memory.RAM, cpu *z80.Z80) {
+	_, _, _, height := view.GetInnerRect()
+	view.Clear()
+	dumpstack(view, mem, cpu.SP, height*8)
+}
+
+func isHexAddressInput(text string) bool {
+	if len(text) > 4 {
+		return false
+	}
+	for _, char := range text {
+		if !(char >= '0' && char <= '9' ||
+			char >= 'a' && char <= 'f' ||
+			char >= 'A' && char <= 'F') {
+			return false
+		}
+	}
+	return true
 }
 
 func loadProgramFromFile(path string) ([]uint8, error) {
@@ -89,6 +327,68 @@ func loadProgramFromFile(path string) ([]uint8, error) {
 	if len(program) > 1<<16 {
 		return nil, fmt.Errorf("program %q is %d bytes; maximum size is 65536 bytes", path, len(program))
 	}
-	fmt.Printf("Loaded program %q (%d bytes)\n", path, len(program))
 	return program, nil
+}
+
+func stepCPU(cpu *z80.Z80,
+	app *tview.Application,
+	status *tview.TextView,
+	processorMemory *tview.TextView, mem *memory.RAM,
+	stack *tview.TextView,
+	registers *tview.TextView, displayAddress uint16) {
+
+	cycles := cpu.Step()
+	status.Clear()
+	processorMemory.Clear()
+	registers.Clear()
+	fmt.Fprintln(status, fmt.Sprintf("Single Step, cycles: %d", cycles))
+	refreshMemoryDump(processorMemory, mem, displayAddress)
+	refreshStackDump(stack, mem, cpu)
+	registerdump(registers, cpu)
+}
+
+func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
+	processorMemory *tview.TextView, mem *memory.RAM,
+	stack *tview.TextView,
+	registers *tview.TextView, displayAddress uint16) {
+
+	status.Clear()
+	processorMemory.Clear()
+	registers.Clear()
+	cycles := 0
+	for !cpu.Halted {
+		cycles = cpu.Step()
+	}
+	fmt.Fprintln(status, fmt.Sprintf("Halted, cycles: %d", cycles))
+	refreshMemoryDump(processorMemory, mem, displayAddress)
+	refreshStackDump(stack, mem, cpu)
+	registerdump(registers, cpu)
+}
+
+func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
+	processorMemory *tview.TextView, mem *memory.RAM, stack *tview.TextView,
+	registers *tview.TextView, startAddress uint16) {
+	mem.Clear()
+	cpu.Reset()
+	cpu.A, cpu.F = 0, 0
+	cpu.B, cpu.C = 0, 0
+	cpu.D, cpu.E = 0, 0
+	cpu.H, cpu.L = 0, 0
+	cpu.A_, cpu.F_ = 0, 0
+	cpu.B_, cpu.C_ = 0, 0
+	cpu.D_, cpu.E_ = 0, 0
+	cpu.H_, cpu.L_ = 0, 0
+	cpu.IXH, cpu.IXL = 0, 0
+	cpu.IYH, cpu.IYL = 0, 0
+	cpu.WZ = 0
+	cpu.SP = 0xFFFF
+	cpu.PC = 0
+	cpu.NMI = false
+	cpu.INT = false
+	status.Clear()
+	registers.Clear()
+	refreshMemoryDump(processorMemory, mem, startAddress)
+	refreshStackDump(stack, mem, cpu)
+	registerdump(registers, cpu)
+	fmt.Fprintln(status, "CPU reset; memory cleared.")
 }

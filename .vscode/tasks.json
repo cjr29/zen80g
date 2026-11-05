@@ -1,0 +1,71 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Build for Raspberry Pi (64bit)",
+			"type": "shell",
+			"command": "go build -o zen80gPi64bit",
+			"options": {
+				"env": {
+					"GOOS": "linux",
+					"GOARCH": "arm64",
+					"CGO_ENABLED": "0"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build for Raspberry Pi Zero W (32bit)",
+			"type": "shell",
+			"command": "go build -o zen80gPi32bit",
+			"options": {
+				"env": {
+					"GOOS": "linux",
+					"GOARCH": "arm",
+					"GOARM": "6",
+					"CGO_ENABLED": "0"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build for macOS",
+			"type": "shell",
+			"command": "go build -o zen80gMacOS",
+			"options": {
+				"env": {
+					"GOOS": "darwin",
+					"GOARCH": "arm64",
+					"CGO_ENABLED": "0"
+				}
+			},
+			"presentation": {
+				"reveal": "always",
+				"panel": "new"
+			},
+			"problemMatcher": []
+		},
+		{
+			"label": "Build all targets",
+			"dependsOn": [
+				"Build for Raspberry Pi (64bit)",
+				"Build for Raspberry Pi Zero W (32bit)",
+				"Build for macOS"
+			],
+			"dependsOrder": "sequence",
+			"group": {
+				"kind": "build",
+				"isDefault": true
+			},
+			"problemMatcher": []
+		}
+	]
+}
