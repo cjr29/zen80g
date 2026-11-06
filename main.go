@@ -52,12 +52,7 @@ func main() {
 	/****************************************************************/
 	/********************      Set up GUI    ************************/
 	/****************************************************************/
-	app := tview.NewApplication()
-
-	cmds := tview.NewTextView().
-		SetText("Select command and press Enter.").
-		SetDynamicColors(true)
-	cmds.SetBorder(true).SetTitle("Commands")
+	app := tview.NewApplication().SetTitle("zen80 - Z80 Emulator")
 
 	//processorMemory := viewgrid("Memory")
 	processorMemory := tview.NewTextView().
@@ -255,7 +250,10 @@ func main() {
 	})
 
 	// Two buttons inside one grid cell.
-	buttons = tview.NewForm().SetButtonsAlign(tview.AlignLeft).SetButtonBackgroundColor(tcell.ColorBlack).
+	buttons = tview.NewForm().
+		SetHorizontal(true).
+		SetButtonsAlign(tview.AlignLeft).
+		SetButtonBackgroundColor(tcell.ColorBlack).
 		AddButton("[blue]Step", func() {
 			if running.Load() {
 				return
@@ -312,12 +310,12 @@ func main() {
 				Foreground(tcell.ColorBlack).
 				Background(tcell.ColorYellow),
 		)
+	buttons.SetBorder(true).SetTitle("Commands")
 
 	grid := tview.NewGrid().
-		SetRows(3, 0, 3).
+		SetRows(7, 0, 3).
 		SetColumns(75, 32, -4).
 		SetBorders(true).
-		// AddItem(viewgrid("Commands"), 0, 0, 1, 3, 0, 0, false).
 		AddItem(buttons, 0, 0, 1, 3, 0, 0, true).
 		AddItem(status, 2, 0, 1, 3, 0, 0, false)
 

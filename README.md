@@ -18,3 +18,6 @@ Builds are for MacOS and 32-bit and 64-bit Raspberry Pi processors.
 Development is in Visual Studio Code on a MacBook Air M4 running macOS Golden Gate 27.x using go 1.27.x.
 
 Z80 assembly code is cross-compiled using the open source tool [z88dk](https://github.com/z88dk/z88dk.git). Code is composed in VSCode, assembled using z88db-z80asm from <filename>.asm into object code <filename>.o and listing <filename>.lis. The <filename>.o file is loaded into zen80g simulator and executed.
+
+# Screenshots
+<img src="images/screen1.png" alt="zen80g Terminal Screen" width="700">
