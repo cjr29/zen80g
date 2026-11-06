@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
@@ -44,6 +45,7 @@ func main() {
 	}
 	startAddress := uint16(0)
 	displayAddress := startAddress
+	stackStartAddress := uint16(0xFFFF)
 	mem.Load(startAddress, program)
 	cpu := z80.New(mem, io)
 
@@ -82,6 +84,7 @@ func main() {
 
 	pages := tview.NewPages()
 	var buttons *tview.Form
+	var running atomic.Bool
 	addressInput := tview.NewInputField().
 		SetLabel("Program start address (4 hex digits): ").
 		SetPlaceholder(fmt.Sprintf("%04X", startAddress)).
@@ -213,18 +216,68 @@ func main() {
 		app.SetFocus(buttons)
 	})
 
+	stackAddressInput := tview.NewInputField().
+		SetLabel("Stack start address (4 hex digits): ").
+		SetPlaceholder(fmt.Sprintf("%04X", stackStartAddress)).
+		SetFieldWidth(4).
+		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
+			return isHexAddressInput(textToCheck)
+		})
+	stackAddressForm := tview.NewForm().
+		AddFormItem(stackAddressInput).
+		AddButton("Set", func() {
+			text := stackAddressInput.GetText()
+			address, err := strconv.ParseUint(text, 16, 16)
+			if len(text) != 4 || err != nil {
+				status.SetText("Address must be exactly four hexadecimal digits.")
+				pages.SwitchToPage("main")
+				app.SetFocus(buttons)
+				return
+			}
+
+			stackStartAddress = uint16(address)
+			cpu.SP = stackStartAddress
+			refreshStackDump(stack, mem, cpu, stackStartAddress)
+			registers.Clear()
+			registerdump(registers, cpu)
+			status.SetText(fmt.Sprintf("Stack start address set to %04X.", stackStartAddress))
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		}).
+		AddButton("Cancel", func() {
+			pages.SwitchToPage("main")
+			app.SetFocus(buttons)
+		})
+	stackAddressForm.SetBorder(true).SetTitle("Set Stack Start Address")
+	stackAddressForm.SetCancelFunc(func() {
+		pages.SwitchToPage("main")
+		app.SetFocus(buttons)
+	})
+
 	// Two buttons inside one grid cell.
 	buttons = tview.NewForm().SetButtonsAlign(tview.AlignLeft).SetButtonBackgroundColor(tcell.ColorBlack).
 		AddButton("[blue]Step", func() {
-			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress)
+			if running.Load() {
+				return
+			}
+			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress)
 		}).
 		AddButton("[green]Run", func() {
-			runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress)
+			if !running.CompareAndSwap(false, true) {
+				return
+			}
+			setRunControlsEnabled(buttons, false)
+			app.SetFocus(buttons.GetButton(3))
+			go runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running)
 		}).
 		AddButton("[yellow]Reset", func() {
-			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, startAddress)
+			if running.Load() {
+				return
+			}
+			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress)
 		}).
-		AddButton("[red]Quit", func() {
+		AddButton("[red]EXIT", func() {
+			running.Store(false)
 			app.Stop()
 		}).
 		AddButton("[white]Program Load Address", func() {
@@ -246,6 +299,13 @@ func main() {
 			loadProgramForm.SetFocus(0)
 			pages.SwitchToPage("loadProgram")
 			app.SetFocus(loadProgramForm)
+		}).
+		AddButton("[white]Stack Start Address", func() {
+			stackAddressInput.SetText("")
+			stackAddressInput.SetPlaceholder(fmt.Sprintf("%04X", stackStartAddress))
+			stackAddressForm.SetFocus(0)
+			pages.SwitchToPage("stackAddress")
+			app.SetFocus(stackAddressForm)
 		}).
 		SetButtonActivatedStyle(
 			tcell.StyleDefault.
@@ -274,16 +334,14 @@ func main() {
 	pages.AddPage("main", grid, true, true).
 		AddPage("address", addressForm, true, false).
 		AddPage("loadProgram", loadProgramForm, true, false).
-		AddPage("displayAddress", displayAddressForm, true, false)
+		AddPage("displayAddress", displayAddressForm, true, false).
+		AddPage("stackAddress", stackAddressForm, true, false)
 
 	if err := app.SetRoot(pages, true).
 		SetFocus(grid).
 		EnableMouse(true).
 		Run(); err != nil {
 		log.Fatal(err)
-	}
-	for !cpu.Halted {
-		cpu.Step()
 	}
 }
 
@@ -299,10 +357,14 @@ func refreshMemoryDump(view *tview.TextView, mem *memory.RAM, startAddress uint1
 	memorydump(view, mem, startAddress, length)
 }
 
-func refreshStackDump(view *tview.TextView, mem *memory.RAM, cpu *z80.Z80) {
+func refreshStackDump(view *tview.TextView, mem *memory.RAM, cpu *z80.Z80, stackStartAddress uint16) {
 	_, _, _, height := view.GetInnerRect()
 	view.Clear()
-	dumpstack(view, mem, cpu.SP, height*8)
+	rowCount := height - 1
+	if rowCount < 0 {
+		rowCount = 0
+	}
+	dumpstack(view, mem, cpu.SP, stackStartAddress, rowCount)
 }
 
 func isHexAddressInput(text string) bool {
@@ -317,6 +379,15 @@ func isHexAddressInput(text string) bool {
 		}
 	}
 	return true
+}
+
+func setRunControlsEnabled(buttons *tview.Form, enabled bool) {
+	const exitButtonIndex = 3
+	for i := 0; i < buttons.GetButtonCount(); i++ {
+		if i != exitButtonIndex {
+			buttons.GetButton(i).SetDisabled(!enabled)
+		}
+	}
 }
 
 func loadProgramFromFile(path string) ([]uint8, error) {
@@ -335,7 +406,7 @@ func stepCPU(cpu *z80.Z80,
 	status *tview.TextView,
 	processorMemory *tview.TextView, mem *memory.RAM,
 	stack *tview.TextView,
-	registers *tview.TextView, displayAddress uint16) {
+	registers *tview.TextView, displayAddress, stackStartAddress uint16) {
 
 	cycles := cpu.Step()
 	status.Clear()
@@ -343,31 +414,43 @@ func stepCPU(cpu *z80.Z80,
 	registers.Clear()
 	fmt.Fprintln(status, fmt.Sprintf("Single Step, cycles: %d", cycles))
 	refreshMemoryDump(processorMemory, mem, displayAddress)
-	refreshStackDump(stack, mem, cpu)
+	refreshStackDump(stack, mem, cpu, stackStartAddress)
 	registerdump(registers, cpu)
 }
 
 func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 	processorMemory *tview.TextView, mem *memory.RAM,
 	stack *tview.TextView,
-	registers *tview.TextView, displayAddress uint16) {
-
-	status.Clear()
-	processorMemory.Clear()
-	registers.Clear()
+	registers *tview.TextView, displayAddress, stackStartAddress uint16,
+	buttons *tview.Form, running *atomic.Bool) {
 	cycles := 0
-	for !cpu.Halted {
+	for !cpu.Halted && running.Load() {
 		cycles = cpu.Step()
 	}
-	fmt.Fprintln(status, fmt.Sprintf("Halted, cycles: %d", cycles))
-	refreshMemoryDump(processorMemory, mem, displayAddress)
-	refreshStackDump(stack, mem, cpu)
-	registerdump(registers, cpu)
+	if !running.Load() {
+		return
+	}
+
+	app.QueueUpdateDraw(func() {
+		if !running.Load() {
+			return
+		}
+		status.Clear()
+		processorMemory.Clear()
+		registers.Clear()
+		fmt.Fprintf(status, "Halted, cycles: %d\n", cycles)
+		refreshMemoryDump(processorMemory, mem, displayAddress)
+		refreshStackDump(stack, mem, cpu, stackStartAddress)
+		registerdump(registers, cpu)
+		setRunControlsEnabled(buttons, true)
+		running.Store(false)
+		app.SetFocus(buttons)
+	})
 }
 
 func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 	processorMemory *tview.TextView, mem *memory.RAM, stack *tview.TextView,
-	registers *tview.TextView, startAddress uint16) {
+	registers *tview.TextView, displayAddress, stackStartAddress uint16) {
 	mem.Clear()
 	cpu.Reset()
 	cpu.A, cpu.F = 0, 0
@@ -381,14 +464,14 @@ func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 	cpu.IXH, cpu.IXL = 0, 0
 	cpu.IYH, cpu.IYL = 0, 0
 	cpu.WZ = 0
-	cpu.SP = 0xFFFF
+	cpu.SP = stackStartAddress
 	cpu.PC = 0
 	cpu.NMI = false
 	cpu.INT = false
 	status.Clear()
 	registers.Clear()
-	refreshMemoryDump(processorMemory, mem, startAddress)
-	refreshStackDump(stack, mem, cpu)
+	refreshMemoryDump(processorMemory, mem, displayAddress)
+	refreshStackDump(stack, mem, cpu, stackStartAddress)
 	registerdump(registers, cpu)
 	fmt.Fprintln(status, "CPU reset; memory cleared.")
 }

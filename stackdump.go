@@ -8,27 +8,33 @@ import (
 	"github.com/ha1tch/zen80/memory"
 )
 
-func dumpstack(w io.Writer, mem *memory.RAM, stackPointer uint16, length int) {
+func dumpstack(w io.Writer, mem *memory.RAM, stackPointer, stackStart uint16, rowCount int) {
 	const bytesPerRow = 8
 
-	for offset := 0; offset < length; offset += bytesPerRow {
-		if offset > 0 {
-			fmt.Fprintln(w)
+	fmt.Fprintf(w, "SP: %04x", stackPointer)
+	for row := 0; row < rowCount; row++ {
+		rowAddress := int(stackStart) - row*bytesPerRow
+		if rowAddress < 0 {
+			break
 		}
+		fmt.Fprintln(w)
 
-		end := offset + bytesPerRow
-		if end > length {
-			end = length
+		highlight := int(stackPointer) <= rowAddress && int(stackPointer) >= rowAddress-bytesPerRow+1
+		if highlight {
+			fmt.Fprint(w, "[yellow]")
 		}
-
+		fmt.Fprintf(w, "%04x  ", rowAddress)
 		var values strings.Builder
-		for i := offset; i < end; i++ {
-			if i > offset {
+		for i := 0; i < bytesPerRow; i++ {
+			if i > 0 {
 				values.WriteByte(' ')
 			}
-			address := uint16(uint32(stackPointer) + uint32(i))
+			address := uint16(rowAddress - i)
 			fmt.Fprintf(&values, "%02x", mem.Read(address))
 		}
-		fmt.Fprintf(w, "%04x  %s", uint16(uint32(stackPointer)+uint32(offset)), values.String())
+		fmt.Fprint(w, values.String())
+		if highlight {
+			fmt.Fprint(w, "[-]")
+		}
 	}
 }
