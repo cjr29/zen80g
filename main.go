@@ -28,13 +28,15 @@ func main() {
 	mem := memory.NewRAM()
 	io := io.NewNullIO()
 
-	// Load a program
+	// Load a default program for demo purposes. This program adds 5 and 3 and halts.
 	program := []uint8{
 		0x3E, 0x05, // LD A, 5
 		0x06, 0x03, // LD B, 3
 		0x80, // ADD A, B
 		0x76, // HALT
 	}
+
+	// Load program from file if specified as option. If not, use the default program above.
 	if *programPath != "" {
 		var err error
 		program, err = loadProgramFromFile(*programPath)
@@ -335,12 +337,17 @@ func main() {
 		AddPage("displayAddress", displayAddressForm, true, false).
 		AddPage("stackAddress", stackAddressForm, true, false)
 
+	refreshMemoryDump(processorMemory, mem, displayAddress)
+	refreshStackDump(stack, mem, cpu, stackStartAddress)
+	registerdump(registers, cpu)
+
 	if err := app.SetRoot(pages, true).
 		SetFocus(grid).
 		EnableMouse(true).
 		Run(); err != nil {
 		log.Fatal(err)
 	}
+
 }
 
 func refreshMemoryDump(view *tview.TextView, mem *memory.RAM, startAddress uint16) {

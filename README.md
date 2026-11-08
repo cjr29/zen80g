@@ -21,3 +21,4 @@ Z80 assembly code is cross-compiled using the open source tool [z88dk](https://g
 
 # Screenshots
 <img src="images/screen1.png" alt="zen80g Terminal Screen" width="700">
+<img src="images/screen2.png" alt="zen80g Terminal Screen" width="700">
