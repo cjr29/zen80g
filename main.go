@@ -430,7 +430,7 @@ func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 	buttons *tview.Form, running *atomic.Bool) {
 	cycles := 0
 	for !cpu.Halted && running.Load() {
-		cycles = cpu.Step()
+		cycles = cycles + cpu.Step()
 	}
 	if !running.Load() {
 		return
@@ -475,6 +475,7 @@ func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 	cpu.INT = false
 	status.Clear()
 	registers.Clear()
+	processorMemory.Clear()
 	refreshMemoryDump(processorMemory, mem, displayAddress)
 	refreshStackDump(stack, mem, cpu, stackStartAddress)
 	registerdump(registers, cpu)
