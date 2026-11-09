@@ -27,6 +27,7 @@ func main() {
 	// Create memory and I/O
 	mem := memory.NewRAM()
 	io := io.NewNullIO()
+	cpu := z80.New(mem, io)
 
 	// Load a default program for demo purposes. This program adds 5 and 3 and halts.
 	program := []uint8{
@@ -49,7 +50,6 @@ func main() {
 	displayAddress := startAddress
 	stackStartAddress := uint16(0xFFFF)
 	mem.Load(startAddress, program)
-	cpu := z80.New(mem, io)
 
 	/****************************************************************/
 	/********************      Set up GUI    ************************/
@@ -276,7 +276,7 @@ func main() {
 			}
 			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress)
 		}).
-		AddButton("[red]EXIT", func() {
+		AddButton("[red]Exit", func() {
 			running.Store(false)
 			app.Stop()
 		}).
@@ -347,7 +347,6 @@ func main() {
 		Run(); err != nil {
 		log.Fatal(err)
 	}
-
 }
 
 func refreshMemoryDump(view *tview.TextView, mem *memory.RAM, startAddress uint16) {
