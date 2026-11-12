@@ -11,7 +11,7 @@ import (
 func dumpstack(w io.Writer, mem *memory.RAM, stackPointer, stackStart uint16, rowCount int) {
 	const bytesPerRow = 8
 
-	fmt.Fprintf(w, "SP: %04x", stackPointer)
+	fmt.Fprintf(w, "SP: %04x, [grows high to low]", stackPointer)
 	for row := 0; row < rowCount; row++ {
 		rowAddress := int(stackStart) - row*bytesPerRow
 		if rowAddress < 0 {
