@@ -9,7 +9,7 @@ Destination: EQU 0x0100
 
 main:       ; Main program entry point
 ; Copy string from DATA to Destination
-LD  HL, DATA + 2    ; Point to source (2 bytes beyound start of string)
+LD  HL, DATA + 2    ; Point to source (2 bytes beyond start of string)
 LD  DE, Destination ; Point to destination
 LD  BC, (DATA)      ; Get length of string (stored in first two bytes of data - little endian)
 LDIR                ; Move BC bytes from (HL) to (DE)

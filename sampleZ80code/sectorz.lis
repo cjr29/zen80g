@@ -1,0 +1,711 @@
+sectorz.asm:
+     1                          ; SectorZ - A Tiny C Compiler in Z80 Assembly
+     2                          ; Compiles "Barely C" source to Z80 machine code
+     3                          ; Target: retro-z80-emulator (MC6850 ACIA on ports $80/$81)
+     4                          ;
+     5                          ; Assemble with: z80asm -o sectorz.bin sectorz.asm
+     6                          
+     7                          ; ============================================================
+     8                          ; Constants
+     9                          ; ============================================================
+    10                          
+    11                          tramp_base:	equ	$D000	; Function trampoline table (64 entries x 4)
+    12                          var_base_hi:	equ	$D1	; High byte of variable storage base
+    13                          semi_buf:	equ	$D200	; Semicolon pushback flag (1 byte)
+    14                          num_flag:	equ	$D201	; Nonzero if current token is a number
+    15                          eof_flag:	equ	$D202	; Nonzero if EOF detected
+    16                          code_start:	equ	$D300	; Generated code output area
+    17                          stack_top:	equ	$D000	; Stack pointer initial value
+    18                          
+    19                          ; ACIA ports (MC6850)
+    20                          acia_stat:	equ	$80	; Status register
+    21                          acia_data:	equ	$81	; Data register
+    22                          
+    23                          ; Token hash values
+    24                          tok_int:	equ	11716
+    25                          tok_void:	equ	64714
+    26                          tok_if:		equ	1152
+    27                          tok_while:	equ	60497
+    28                          tok_asm:	equ	10959
+    29                          tok_rparen:	equ	41
+    30                          tok_rbrace:	equ	125
+    31                          tok_lparen:	equ	40
+    32                          tok_star:	equ	42
+    33                          tok_amp:	equ	38
+    34                          
+    35                          ; Main function trampoline address
+    36                          ; hash("main") = 54324 = $D434, low byte $34, AND $FC = $34
+    37                          main_tramp:	equ	tramp_base + $34
+    38                          
+    39                          	org	$0000
+    40                          
+    41                          ; ============================================================
+    42                          ; Entry Point
+    43                          ; ============================================================
+    44                          
+    45                          entry:
+    46  0000  3100d0            	ld	sp, stack_top
+    47  0003  2100d3            	ld	hl, code_start		; HL = code output pointer
+    48  0006  cd0d00            	call	compile
+    49  0009  cd34d0            	call	main_tramp		; Run main() via trampoline
+    50  000c  76                	halt
+    51                          
+    52                          ; ============================================================
+    53                          ; compile - Parse top-level declarations (int / void)
+    54                          ; ============================================================
+    55                          
+    56                          compile:
+    57  000d  cdba01            	call	tok_next
+    58  0010  cdaf01            	call	cp_de_imm
+    59  0013  c42d              	dw	tok_int
+    60  0015  2808              	jr	z, do_int
+    61  0017  cdaf01            	call	cp_de_imm
+    62  001a  cafc              	dw	tok_void
+    63  001c  2809              	jr	z, do_void
+    64  001e  c9                	ret				; Unknown/EOF -> done
+    65                          
+    66                          do_int:
+    67                          	; int varname ;
+    68  001f  cdba01            	call	tok_next		; Read variable name (discard)
+    69  0022  cdba01            	call	tok_next		; Read ";" (discard)
+    70  0025  18e6              	jr	compile
+    71                          
+    72                          do_void:
+    73                          	; void funcname ( ) { stmts }
+    74  0027  cdba01            	call	tok_next		; Read function name -> DE
+    75                          	; Set up trampoline: JP to current code position
+    76  002a  cda801            	call	func_addr		; DE = trampoline address
+    77  002d  d5                	push	de			; Save trampoline addr
+    78  002e  3ec3              	ld	a, $C3			; JP opcode
+    79  0030  12                	ld	(de), a
+    80  0031  13                	inc	de
+    81  0032  7d                	ld	a, l
+    82  0033  12                	ld	(de), a
+    83  0034  13                	inc	de
+    84  0035  7c                	ld	a, h
+    85  0036  12                	ld	(de), a
+    86  0037  d1                	pop	de			; Clean stack
+    87  0038  cdba01            	call	tok_next		; Read "("
+    88  003b  cdba01            	call	tok_next		; Read ")"
+    89  003e  cdba01            	call	tok_next		; Read "{"
+    90  0041  cd4900            	call	compile_stmts
+    91                          	; Emit RET at end of function body
+    92  0044  36c9              	ld	(hl), $C9
+    93  0046  23                	inc	hl
+    94  0047  18c4              	jr	compile
+    95                          
+    96                          ; ============================================================
+    97                          ; compile_stmts - Parse statements until "}"
+    98                          ; ============================================================
+    99                          
+   100                          compile_stmts:
+   101  0049  cdba01            	call	tok_next
+   102                          	; Check EOF
+   103  004c  7a                	ld	a, d
+   104  004d  b3                	or	e
+   105  004e  c8                	ret	z
+   106                          	; Check "}"
+   107  004f  cdaf01            	call	cp_de_imm
+   108  0052  7d00              	dw	tok_rbrace
+   109  0054  c8                	ret	z
+   110                          	; Check "asm"
+   111  0055  cdaf01            	call	cp_de_imm
+   112  0058  cf2a              	dw	tok_asm
+   113  005a  283e              	jr	z, do_asm
+   114                          	; Check "if"
+   115  005c  cdaf01            	call	cp_de_imm
+   116  005f  8004              	dw	tok_if
+   117  0061  284e              	jr	z, do_if
+   118                          	; Check "while"
+   119  0063  cdaf01            	call	cp_de_imm
+   120  0066  51ec              	dw	tok_while
+   121  0068  2862              	jr	z, do_while
+   122                          	; Check "*" (deref assign)
+   123  006a  cdaf01            	call	cp_de_imm
+   124  006d  2a00              	dw	tok_star
+   125  006f  287f              	jr	z, do_deref_assign
+   126                          	; Default: identifier - could be call or assignment
+   127  0071  d5                	push	de			; Save name token
+   128  0072  cdba01            	call	tok_next		; Read "(" or "="
+   129  0075  cdaf01            	call	cp_de_imm
+   130  0078  2800              	dw	tok_lparen
+   131  007a  280c              	jr	z, do_call
+   132                          	; Fall through to do_assign (we just consumed "=")
+   133                          
+   134                          ; ============================================================
+   135                          ; do_assign - variable = expr ;
+   136                          ; ============================================================
+   137                          
+   138                          do_assign:
+   139                          	; Stack: [name_token, ...]
+   140  007c  cd1501            	call	compile_expr		; Compile RHS (consumes ";")
+   141  007f  d1                	pop	de			; Get variable name
+   142  0080  3e22              	ld	a, $22			; LD (addr),HL opcode
+   143  0082  cd9901            	call	emit_var
+   144  0085  c34900            	jp	compile_stmts
+   145                          
+   146                          ; ============================================================
+   147                          ; do_call - funcname ( ) ;
+   148                          ; ============================================================
+   149                          
+   150                          do_call:
+   151  0088  d1                	pop	de			; Get function name
+   152  0089  cda801            	call	func_addr		; DE = trampoline addr
+   153  008c  3ecd              	ld	a, $CD			; CALL opcode
+   154  008e  cda101            	call	emit3
+   155  0091  cdba01            	call	tok_next		; Read ")"
+   156  0094  cdba01            	call	tok_next		; Read ";"
+   157  0097  c34900            	jp	compile_stmts
+   158                          
+   159                          ; ============================================================
+   160                          ; do_asm - asm ( byte byte ... ) ;
+   161                          ; ============================================================
+   162                          
+   163                          do_asm:
+   164  009a  cdba01            	call	tok_next		; Read "("
+   165                          do_asm_loop:
+   166  009d  cdba01            	call	tok_next		; Read value or ")"
+   167  00a0  cdaf01            	call	cp_de_imm
+   168  00a3  2900              	dw	tok_rparen
+   169  00a5  2804              	jr	z, do_asm_done
+   170  00a7  73                	ld	(hl), e			; Emit low byte
+   171  00a8  23                	inc	hl
+   172  00a9  18f2              	jr	do_asm_loop
+   173                          do_asm_done:
+   174  00ab  cdba01            	call	tok_next		; Read ";"
+   175  00ae  c34900            	jp	compile_stmts
+   176                          
+   177                          ; ============================================================
+   178                          ; do_if - if ( expr ) { stmts }
+   179                          ; ============================================================
+   180                          
+   181                          do_if:
+   182  00b1  cdba01            	call	tok_next		; Read "("
+   183  00b4  cd1501            	call	compile_expr		; Compile condition (consumes ")")
+   184                          	; Emit: LD A,H / OR L / JP Z,????
+   185  00b7  cd0b01            	call	emit_test
+   186  00ba  e5                	push	hl			; Save patch address
+   187  00bb  23                	inc	hl
+   188  00bc  23                	inc	hl
+   189  00bd  cdba01            	call	tok_next		; Read "{"
+   190  00c0  cd4900            	call	compile_stmts		; Compile body (consumes "}")
+   191                          	; Patch forward jump to here
+   192  00c3  d1                	pop	de
+   193  00c4  7d                	ld	a, l
+   194  00c5  12                	ld	(de), a
+   195  00c6  13                	inc	de
+   196  00c7  7c                	ld	a, h
+   197  00c8  12                	ld	(de), a
+   198  00c9  c34900            	jp	compile_stmts
+   199                          
+   200                          ; ============================================================
+   201                          ; do_while - while ( expr ) { stmts }
+   202                          ; ============================================================
+   203                          
+   204                          do_while:
+   205  00cc  cdba01            	call	tok_next		; Read "("
+   206  00cf  e5                	push	hl			; Save loop-back address
+   207  00d0  cd1501            	call	compile_expr		; Compile condition (consumes ")")
+   208                          	; Emit: LD A,H / OR L / JP Z,????
+   209  00d3  cd0b01            	call	emit_test
+   210  00d6  e5                	push	hl			; Save forward-patch address
+   211  00d7  23                	inc	hl
+   212  00d8  23                	inc	hl
+   213  00d9  cdba01            	call	tok_next		; Read "{"
+   214  00dc  cd4900            	call	compile_stmts		; Compile body (consumes "}")
+   215                          	; Emit JP loop_back
+   216  00df  36c3              	ld	(hl), $C3		; JP opcode
+   217  00e1  23                	inc	hl
+   218  00e2  d1                	pop	de			; Forward-patch address
+   219  00e3  c1                	pop	bc			; Loop-back address
+   220  00e4  71                	ld	(hl), c
+   221  00e5  23                	inc	hl
+   222  00e6  70                	ld	(hl), b
+   223  00e7  23                	inc	hl
+   224                          	; Patch forward jump to here
+   225  00e8  7d                	ld	a, l
+   226  00e9  12                	ld	(de), a
+   227  00ea  13                	inc	de
+   228  00eb  7c                	ld	a, h
+   229  00ec  12                	ld	(de), a
+   230  00ed  c34900            	jp	compile_stmts
+   231                          
+   232                          ; ============================================================
+   233                          ; do_deref_assign - * addr_expr = val_expr ;
+   234                          ; ============================================================
+   235                          
+   236                          do_deref_assign:
+   237  00f0  cd1501            	call	compile_expr		; Compile addr (consumes "=")
+   238                          	; Emit PUSH HL
+   239  00f3  36e5              	ld	(hl), $E5
+   240  00f5  23                	inc	hl
+   241  00f6  cd1501            	call	compile_expr		; Compile value (consumes ";")
+   242                          	; Emit: POP DE / EX DE,HL / LD (HL),E / INC HL / LD (HL),D
+   243  00f9  36d1              	ld	(hl), $D1		; POP DE
+   244  00fb  23                	inc	hl
+   245  00fc  36eb              	ld	(hl), $EB		; EX DE,HL
+   246  00fe  23                	inc	hl
+   247  00ff  3673              	ld	(hl), $73		; LD (HL),E
+   248  0101  23                	inc	hl
+   249  0102  3623              	ld	(hl), $23		; INC HL
+   250  0104  23                	inc	hl
+   251  0105  3672              	ld	(hl), $72		; LD (HL),D
+   252  0107  23                	inc	hl
+   253  0108  c34900            	jp	compile_stmts
+   254                          
+   255                          ; ============================================================
+   256                          ; emit_test - Emit condition test: LD A,H / OR L / JP Z,xxxx
+   257                          ;   Leaves HL pointing at the 2-byte address field to patch
+   258                          ; ============================================================
+   259                          
+   260                          emit_test:
+   261  010b  367c              	ld	(hl), $7C		; LD A,H
+   262  010d  23                	inc	hl
+   263  010e  36b5              	ld	(hl), $B5		; OR L
+   264  0110  23                	inc	hl
+   265  0111  36ca              	ld	(hl), $CA		; JP Z
+   266  0113  23                	inc	hl
+   267  0114  c9                	ret
+   268                          
+   269                          ; ============================================================
+   270                          ; compile_expr - Compile binary expression
+   271                          ;   Left-to-right, no precedence. Consumes trailing terminator.
+   272                          ; ============================================================
+   273                          
+   274                          compile_expr:
+   275  0115  cd5001            	call	compile_unary
+   276                          ce_op_loop:
+   277  0118  cdba01            	call	tok_next		; Read potential operator
+   278                          	; Save code pointer, scan op table with HL
+   279  011b  e5                	push	hl
+   280  011c  213602            	ld	hl, op_table
+   281                          ce_scan:
+   282  011f  4e                	ld	c, (hl)
+   283  0120  23                	inc	hl
+   284  0121  46                	ld	b, (hl)
+   285  0122  23                	inc	hl
+   286                          	; Check sentinel
+   287  0123  78                	ld	a, b
+   288  0124  b1                	or	c
+   289  0125  2827              	jr	z, ce_not_op
+   290                          	; Compare BC with DE
+   291  0127  7b                	ld	a, e
+   292  0128  b9                	cp	c
+   293  0129  2004              	jr	nz, ce_skip
+   294  012b  7a                	ld	a, d
+   295  012c  b8                	cp	b
+   296  012d  2804              	jr	z, ce_found
+   297                          ce_skip:
+   298  012f  23                	inc	hl			; Skip helper addr
+   299  0130  23                	inc	hl
+   300  0131  18ec              	jr	ce_scan
+   301                          
+   302                          ce_found:
+   303                          	; HL points to helper address in table
+   304  0133  4e                	ld	c, (hl)
+   305  0134  23                	inc	hl
+   306  0135  46                	ld	b, (hl)			; BC = helper address
+   307  0136  e1                	pop	hl			; Restore code pointer
+   308                          	; Emit PUSH HL (save left operand in generated code)
+   309  0137  36e5              	ld	(hl), $E5
+   310  0139  23                	inc	hl
+   311  013a  c5                	push	bc			; Save helper address
+   312  013b  cd5001            	call	compile_unary		; Compile right operand
+   313  013e  c1                	pop	bc			; Restore helper address
+   314                          	; Emit: POP DE / EX DE,HL / CALL helper
+   315  013f  36d1              	ld	(hl), $D1		; POP DE
+   316  0141  23                	inc	hl
+   317  0142  36eb              	ld	(hl), $EB		; EX DE,HL
+   318  0144  23                	inc	hl
+   319  0145  36cd              	ld	(hl), $CD		; CALL
+   320  0147  23                	inc	hl
+   321  0148  71                	ld	(hl), c
+   322  0149  23                	inc	hl
+   323  014a  70                	ld	(hl), b
+   324  014b  23                	inc	hl
+   325  014c  18ca              	jr	ce_op_loop
+   326                          
+   327                          ce_not_op:
+   328                          	; Token was not an operator (terminator consumed)
+   329  014e  e1                	pop	hl			; Restore code pointer
+   330  014f  c9                	ret
+   331                          
+   332                          ; ============================================================
+   333                          ; compile_unary - Compile unary expression
+   334                          ;   Handles: ( expr ), *expr, &var, number, variable
+   335                          ; ============================================================
+   336                          
+   337                          compile_unary:
+   338  0150  cdba01            	call	tok_next
+   339                          	; Check "("
+   340  0153  cdaf01            	call	cp_de_imm
+   341  0156  2800              	dw	tok_lparen
+   342  0158  281e              	jr	z, cu_paren
+   343                          	; Check "*" (dereference)
+   344  015a  cdaf01            	call	cp_de_imm
+   345  015d  2a00              	dw	tok_star
+   346  015f  281a              	jr	z, cu_deref
+   347                          	; Check "&" (address-of)
+   348  0161  cdaf01            	call	cp_de_imm
+   349  0164  2600              	dw	tok_amp
+   350  0166  2823              	jr	z, cu_addr
+   351                          	; Check if number
+   352  0168  3a01d2            	ld	a, (num_flag)
+   353  016b  b7                	or	a
+   354  016c  2005              	jr	nz, cu_number
+   355                          	; Variable: emit LD HL,(var_addr)
+   356  016e  3e2a              	ld	a, $2A
+   357  0170  c39901            	jp	emit_var
+   358                          
+   359                          cu_number:
+   360                          	; Number: emit LD HL, value
+   361  0173  3e21              	ld	a, $21
+   362  0175  c3a101            	jp	emit3
+   363                          
+   364                          cu_paren:
+   365                          	; ( subexpr ) - compile_expr consumes ")"
+   366  0178  c31501            	jp	compile_expr
+   367                          
+   368                          cu_deref:
+   369                          	; * expr - dereference
+   370  017b  cd5001            	call	compile_unary
+   371                          	; Emit: LD E,(HL) / INC HL / LD D,(HL) / EX DE,HL
+   372  017e  365e              	ld	(hl), $5E		; LD E,(HL)
+   373  0180  23                	inc	hl
+   374  0181  3623              	ld	(hl), $23		; INC HL
+   375  0183  23                	inc	hl
+   376  0184  3656              	ld	(hl), $56		; LD D,(HL)
+   377  0186  23                	inc	hl
+   378  0187  36eb              	ld	(hl), $EB		; EX DE,HL
+   379  0189  23                	inc	hl
+   380  018a  c9                	ret
+   381                          
+   382                          cu_addr:
+   383                          	; & var - address of variable
+   384  018b  cdba01            	call	tok_next		; Read variable name
+   385                          	; Compute var address in DE
+   386  018e  7b                	ld	a, e
+   387  018f  e6fe              	and	$FE
+   388  0191  5f                	ld	e, a
+   389  0192  16d1              	ld	d, var_base_hi
+   390                          	; Emit LD HL, var_addr
+   391  0194  3e21              	ld	a, $21
+   392  0196  c3a101            	jp	emit3
+   393                          
+   394                          ; ============================================================
+   395                          ; emit_var - Compute variable address and emit 3-byte instruction
+   396                          ;   A = opcode, DE = token hash -> emits opcode + var_addr
+   397                          ; ============================================================
+   398                          
+   399                          emit_var:
+   400  0199  f5                	push	af
+   401  019a  7b                	ld	a, e
+   402  019b  e6fe              	and	$FE
+   403  019d  5f                	ld	e, a
+   404  019e  16d1              	ld	d, var_base_hi
+   405  01a0  f1                	pop	af
+   406                          	; Fall through to emit3
+   407                          
+   408                          ; ============================================================
+   409                          ; emit3 - Emit 3-byte instruction: A, E, D
+   410                          ; ============================================================
+   411                          
+   412                          emit3:
+   413  01a1  77                	ld	(hl), a
+   414  01a2  23                	inc	hl
+   415  01a3  73                	ld	(hl), e
+   416  01a4  23                	inc	hl
+   417  01a5  72                	ld	(hl), d
+   418  01a6  23                	inc	hl
+   419  01a7  c9                	ret
+   420                          
+   421                          ; ============================================================
+   422                          ; func_addr - Compute trampoline address for function
+   423                          ;   DE = token hash -> DE = trampoline address
+   424                          ; ============================================================
+   425                          
+   426                          func_addr:
+   427  01a8  7b                	ld	a, e
+   428  01a9  e6fc              	and	$FC			; 64 entries x 4 bytes
+   429  01ab  5f                	ld	e, a
+   430  01ac  16d0              	ld	d, tramp_base / 256
+   431  01ae  c9                	ret
+   432                          
+   433                          ; ============================================================
+   434                          ; cp_de_imm - Compare DE with inline 16-bit immediate
+   435                          ;   Usage: CALL cp_de_imm / DW value / JR Z, match
+   436                          ;   Sets Z flag if equal. Preserves all registers except F.
+   437                          ; ============================================================
+   438                          
+   439                          cp_de_imm:
+   440  01af  e3                	ex	(sp), hl		; HL = return addr (-> immediate), stack gets old HL
+   441  01b0  7e                	ld	a, (hl)
+   442  01b1  23                	inc	hl
+   443  01b2  bb                	cp	e
+   444  01b3  2002              	jr	nz, cp_de_ne
+   445  01b5  7e                	ld	a, (hl)
+   446  01b6  ba                	cp	d
+   447                          cp_de_ne:
+   448  01b7  23                	inc	hl			; Advance past high byte regardless
+   449  01b8  e3                	ex	(sp), hl		; Restore HL, update return address
+   450  01b9  c9                	ret
+   451                          
+   452                          ; ============================================================
+   453                          ; tok_next - Read next token, result in DE
+   454                          ;   Preserves HL (code pointer).
+   455                          ;   Sets num_flag nonzero if token is a number.
+   456                          ; ============================================================
+   457                          
+   458                          tok_next:
+   459  01ba  e5                	push	hl
+   460                          	; Check semicolon buffer
+   461  01bb  3a00d2            	ld	a, (semi_buf)
+   462  01be  b7                	or	a
+   463  01bf  2809              	jr	z, tn_no_semi
+   464  01c1  af                	xor	a
+   465  01c2  3200d2            	ld	(semi_buf), a
+   466  01c5  113b00            	ld	de, 59			; ";"
+   467  01c8  e1                	pop	hl
+   468  01c9  c9                	ret
+   469                          
+   470                          tn_no_semi:
+   471  01ca  110000            	ld	de, 0
+   472  01cd  af                	xor	a
+   473  01ce  3201d2            	ld	(num_flag), a		; Clear number flag
+   474  01d1  47                	ld	b, a			; B = 0 (hash mode)
+   475                          
+   476                          	; Skip whitespace
+   477                          tn_skip:
+   478  01d2  cd1c02            	call	getch
+   479  01d5  b7                	or	a
+   480  01d6  2842              	jr	z, tn_done		; EOF
+   481  01d8  fe21              	cp	33
+   482  01da  38f6              	jr	c, tn_skip		; whitespace (< '!')
+   483                          
+   484                          	; First char of token in A
+   485                          	; Detect number (first char is '0'-'9')
+   486  01dc  fe30              	cp	'0'
+   487  01de  380d              	jr	c, tn_hash		; < '0'
+   488  01e0  fe3a              	cp	'9' + 1
+   489  01e2  3009              	jr	nc, tn_hash		; > '9'
+   490                          	; Number mode
+   491  01e4  0630              	ld	b, '0'			; Subtract '0' from each char
+   492  01e6  f5                	push	af
+   493  01e7  3e01              	ld	a, 1
+   494  01e9  3201d2            	ld	(num_flag), a
+   495  01ec  f1                	pop	af
+   496                          
+   497                          	; Hash/accumulate loop
+   498                          tn_hash:
+   499  01ed  fe3b              	cp	';'
+   500  01ef  281b              	jr	z, tn_semi
+   501  01f1  b7                	or	a
+   502  01f2  2826              	jr	z, tn_done		; EOF mid-token
+   503  01f4  fe21              	cp	33
+   504  01f6  3822              	jr	c, tn_done		; Whitespace = end of token
+   505                          
+   506                          	; DE = DE * 10 + (A - B)
+   507  01f8  90                	sub	b			; A = char (or char - '0')
+   508  01f9  f5                	push	af
+   509  01fa  eb                	ex	de, hl			; HL = DE (accumulator)
+   510  01fb  29                	add	hl, hl			; *2
+   511  01fc  54                	ld	d, h
+   512  01fd  5d                	ld	e, l			; DE = acc*2
+   513  01fe  29                	add	hl, hl			; *4
+   514  01ff  29                	add	hl, hl			; *8
+   515  0200  19                	add	hl, de			; *10
+   516  0201  f1                	pop	af
+   517  0202  5f                	ld	e, a
+   518  0203  1600              	ld	d, 0
+   519  0205  19                	add	hl, de			; + digit/char
+   520  0206  eb                	ex	de, hl			; DE = result
+   521                          
+   522  0207  cd1c02            	call	getch
+   523  020a  18e1              	jr	tn_hash
+   524                          
+   525                          tn_semi:
+   526                          	; Semicolon handling
+   527  020c  7a                	ld	a, d
+   528  020d  b3                	or	e
+   529  020e  2005              	jr	nz, tn_semi_buf
+   530                          	; Semicolon IS the token (first char)
+   531  0210  113b00            	ld	de, 59
+   532  0213  1805              	jr	tn_done
+   533                          tn_semi_buf:
+   534                          	; Buffer the semicolon, return current token
+   535  0215  3e01              	ld	a, 1
+   536  0217  3200d2            	ld	(semi_buf), a
+   537                          
+   538                          tn_done:
+   539  021a  e1                	pop	hl
+   540  021b  c9                	ret
+   541                          
+   542                          ; ============================================================
+   543                          ; getch - Read one character from ACIA serial port
+   544                          ;   Returns char in A. Returns 0 on EOF.
+   545                          ; ============================================================
+   546                          
+   547                          getch:
+   548  021c  3a02d2            	ld	a, (eof_flag)
+   549  021f  b7                	or	a
+   550  0220  2012              	jr	nz, getch_eof
+   551                          getch_poll:
+   552  0222  db80              	in	a, (acia_stat)
+   553  0224  cb47              	bit	0, a			; RDRF - data available?
+   554  0226  28fa              	jr	z, getch_poll
+   555  0228  db81              	in	a, (acia_data)
+   556  022a  fe1a              	cp	$1A			; Ctrl-Z = EOF marker
+   557  022c  2801              	jr	z, getch_set_eof
+   558  022e  c9                	ret				; Normal character in A
+   559                          getch_set_eof:
+   560  022f  3e01              	ld	a, 1
+   561  0231  3202d2            	ld	(eof_flag), a
+   562                          getch_eof:
+   563  0234  af                	xor	a
+   564  0235  c9                	ret
+   565                          
+   566                          ; ============================================================
+   567                          ; Binary operator table
+   568                          ;   Each entry: DW token_hash, DW helper_address
+   569                          ;   Terminated by DW 0
+   570                          ; ============================================================
+   571                          
+   572                          op_table:
+   573  0236  2b007002          	dw	43, rt_add		; +
+   574  023a  2d007202          	dw	45, rt_sub		; -
+   575  023e  2a007602          	dw	42, rt_mul		; *
+   576  0242  26008f02          	dw	38, rt_and		; &
+   577  0246  7c009602          	dw	124, rt_or		; |
+   578  024a  5e009d02          	dw	94, rt_xor		; ^
+   579  024e  9402a402          	dw	660, rt_shl		; <<
+   580  0252  aa02ac02          	dw	682, rt_shr		; >>
+   581  0256  9f02cb02          	dw	671, rt_eq		; ==
+   582  025a  8701d402          	dw	391, rt_ne		; !=
+   583  025e  3c00b802          	dw	60, rt_lt		; <
+   584  0262  3e00b702          	dw	62, rt_gt		; >
+   585  0266  9502c102          	dw	661, rt_le		; <=
+   586  026a  a902c202          	dw	681, rt_ge		; >=
+   587  026e  0000              	dw	0			; Sentinel
+   588                          
+   589                          ; ============================================================
+   590                          ; Runtime helpers - Called by generated code for binary ops
+   591                          ;   HL = left operand, DE = right operand, result in HL
+   592                          ; ============================================================
+   593                          
+   594                          rt_add:
+   595  0270  19                	add	hl, de
+   596  0271  c9                	ret
+   597                          
+   598                          rt_sub:
+   599  0272  b7                	or	a
+   600  0273  ed52              	sbc	hl, de
+   601  0275  c9                	ret
+   602                          
+   603                          rt_mul:
+   604                          	; 16-bit multiply: HL = HL * DE
+   605  0276  c5                	push	bc
+   606  0277  44                	ld	b, h
+   607  0278  4d                	ld	c, l			; BC = HL
+   608  0279  210000            	ld	hl, 0
+   609                          rt_mul_lp:
+   610  027c  cb3a              	srl	d
+   611  027e  cb1b              	rr	e
+   612  0280  3001              	jr	nc, rt_mul_na
+   613  0282  09                	add	hl, bc
+   614                          rt_mul_na:
+   615  0283  7a                	ld	a, d
+   616  0284  b3                	or	e
+   617  0285  2806              	jr	z, rt_mul_dn
+   618  0287  cb21              	sla	c
+   619  0289  cb10              	rl	b
+   620  028b  18ef              	jr	rt_mul_lp
+   621                          rt_mul_dn:
+   622  028d  c1                	pop	bc
+   623  028e  c9                	ret
+   624                          
+   625                          rt_and:
+   626  028f  7c                	ld	a, h
+   627  0290  a2                	and	d
+   628  0291  67                	ld	h, a
+   629  0292  7d                	ld	a, l
+   630  0293  a3                	and	e
+   631  0294  6f                	ld	l, a
+   632  0295  c9                	ret
+   633                          
+   634                          rt_or:
+   635  0296  7c                	ld	a, h
+   636  0297  b2                	or	d
+   637  0298  67                	ld	h, a
+   638  0299  7d                	ld	a, l
+   639  029a  b3                	or	e
+   640  029b  6f                	ld	l, a
+   641  029c  c9                	ret
+   642                          
+   643                          rt_xor:
+   644  029d  7c                	ld	a, h
+   645  029e  aa                	xor	d
+   646  029f  67                	ld	h, a
+   647  02a0  7d                	ld	a, l
+   648  02a1  ab                	xor	e
+   649  02a2  6f                	ld	l, a
+   650  02a3  c9                	ret
+   651                          
+   652                          rt_shl:
+   653  02a4  7b                	ld	a, e
+   654  02a5  b7                	or	a
+   655  02a6  c8                	ret	z
+   656                          rt_shl_lp:
+   657  02a7  29                	add	hl, hl
+   658  02a8  3d                	dec	a
+   659  02a9  20fc              	jr	nz, rt_shl_lp
+   660  02ab  c9                	ret
+   661                          
+   662                          rt_shr:
+   663  02ac  7b                	ld	a, e
+   664  02ad  b7                	or	a
+   665  02ae  c8                	ret	z
+   666                          rt_shr_lp:
+   667  02af  cb3c              	srl	h
+   668  02b1  cb1d              	rr	l
+   669  02b3  3d                	dec	a
+   670  02b4  20f9              	jr	nz, rt_shr_lp
+   671  02b6  c9                	ret
+   672                          
+   673                          rt_gt:
+   674  02b7  eb                	ex	de, hl
+   675                          rt_lt:
+   676  02b8  b7                	or	a
+   677  02b9  ed52              	sbc	hl, de
+   678  02bb  210000            	ld	hl, 0
+   679  02be  d0                	ret	nc
+   680  02bf  23                	inc	hl
+   681  02c0  c9                	ret
+   682                          
+   683                          rt_le:
+   684  02c1  eb                	ex	de, hl
+   685                          rt_ge:
+   686  02c2  b7                	or	a
+   687  02c3  ed52              	sbc	hl, de
+   688  02c5  210000            	ld	hl, 0
+   689  02c8  d8                	ret	c
+   690  02c9  23                	inc	hl
+   691  02ca  c9                	ret
+   692                          
+   693                          rt_eq:
+   694  02cb  b7                	or	a
+   695  02cc  ed52              	sbc	hl, de
+   696  02ce  210000            	ld	hl, 0
+   697  02d1  c0                	ret	nz
+   698  02d2  23                	inc	hl
+   699  02d3  c9                	ret
+   700                          
+   701                          rt_ne:
+   702  02d4  b7                	or	a
+   703  02d5  ed52              	sbc	hl, de
+   704  02d7  210000            	ld	hl, 0
+   705  02da  c8                	ret	z
+   706  02db  23                	inc	hl
+   707  02dc  c9                	ret
+   708                          
+   709                          compiler_end:
+   710                          

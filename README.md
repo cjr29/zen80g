@@ -8,7 +8,7 @@ Using a Z80 emulator is a nostalgic move by myself as I started my career in 197
 This is a new project, so you won't get much from it right now, but comments and suggestions are always welcome. Submit an Issue in GitHub.
 
 # Design
-Use the **Load Program** button to load a raw Z80 binary from a file at the selected program load address (default `0000`). A binary can also be loaded at startup with `-program <path>`.
+Use the **Load at** field on the main screen to view or change the address for future program loads (default `0000`). Changing it does not move the program currently in memory. The **Display at** field changes the address shown in the memory view and remains independent of the program load address. The **Stack at** field changes the stack start address and updates the stack pointer. The **PC** field sets the program counter immediately. Use the **Load Program** button to load a raw Z80 binary from a file at the selected program load address. A binary can also be loaded at startup with `-program <path>`.
 
 Since this is a GUI-based project, the main() function will be the user presentation with a grid-style layout on the terminal so it can be run without having a desktop environment. Button widgets on the GUI will support Single-Step, Run, and other zen80 functions. A section of the grid display will provide hex and ASCII inspection of the Z80 memory. Z80 register content will be updated in real-time. I'm adding the ability to load assembled object code from a file directly into the Z80 memory at a specified address. I will attempt to keep this project linked to the z80 project to take advantage of any updates it provides.
 

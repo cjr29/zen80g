@@ -1,0 +1,26 @@
+test1.asm:
+     1                                  ORG 0x0000
+     2  0000  c30400                    JP  main ; Jump to starting address
+     3                          
+     4                          DATA:
+     5  0003  23                        DB  "#"
+     6                          
+     7                          dest:   EQU 0x0100  ; Destination address
+     8                          
+     9                          main:       ; Main program entry point
+    10                          
+    11                          ; First, copy the DATA byte into 64 bytes beginning at Dest
+    12                          ; After each copy, push the B register value onto the stack
+    13  0004  0640                      LD  B,64 ; set loop counter to 64
+    14  0006  0e00                      LD  C, 0
+    15  0008  dd210001                  LD  IX,dest ; load destination address minus 2 bytes to initialize address
+    16  000c  3a0300                    LD  A,(DATA) ; load A with value to copy
+    17                          
+    18                          loop:
+    19  000f  dd7700                    LD  (IX),A ; store contents of A in address pointed to by IX + increment in D
+    20  0012  dd23                      INC IX
+    21  0014  c5                        PUSH BC
+    22  0015  10f8                      DJNZ loop ; decrement counter in B and loop
+    23                          
+    24  0017  76                        HALT   ; done
+    25                          
