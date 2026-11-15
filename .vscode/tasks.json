@@ -4,8 +4,9 @@
 		{
 			"label": "Build for Raspberry Pi (64bit)",
 			"type": "shell",
-			"command": "go build -o zen80gPi64bit",
+			"command": "go build -o ../obj/zen80gPi64bit",
 			"options": {
+				"cwd": "${workspaceFolder}/src",
 				"env": {
 					"GOOS": "linux",
 					"GOARCH": "arm64",
@@ -21,8 +22,9 @@
 		{
 			"label": "Build for Raspberry Pi Zero W (32bit)",
 			"type": "shell",
-			"command": "go build -o zen80gPi32bit",
+			"command": "go build -o ../obj/zen80gPi32bit",
 			"options": {
+				"cwd": "${workspaceFolder}/src",
 				"env": {
 					"GOOS": "linux",
 					"GOARCH": "arm",
@@ -39,8 +41,9 @@
 		{
 			"label": "Build for macOS",
 			"type": "shell",
-			"command": "go build -o zen80gMacOS",
+			"command": "go build -o ../obj/zen80gMacOS",
 			"options": {
+				"cwd": "${workspaceFolder}/src",
 				"env": {
 					"GOOS": "darwin",
 					"GOARCH": "arm64",

@@ -1,3 +1,8 @@
+; movedatablock
+;
+; Moves characters from a buffer into a new location
+; leaving characters in both locations for comparison
+;
 ORG     0x0000
     jp  main    ; Jump to main entry point
 

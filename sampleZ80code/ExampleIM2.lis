@@ -1,0 +1,137 @@
+ExampleIM2.asm:
+     1                              org     0000h
+     2  0000  c30002                jp      Start
+     3  0003  0000000000000000      defs    253              ; pad to address 0100h
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000        
+     4                          
+     5                          ; The table occupies 0100h–01FFh.
+     6                          ; It must be in writable RAM because Start initializes it.
+     7                          
+     8                          IM2Table:
+     9  0100  0000000000000000      defs    256
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+    10                          
+    11                          Start:
+    12  0200  f3                    di
+    13  0201  3100ff                ld      sp, 0FF00h ; use a safe stack area in your RAM map
+    14                          
+    15                          ; Initialize all 128 even-vector entries to DefaultISR.
+    16                          ; Each entry is a two-byte address.
+    17  0204  210001                ld      hl, 0100h
+    18  0207  114002                ld      de, DefaultISR
+    19  020a  0680                  ld      b,  128
+    20                          
+    21                          FillTable:
+    22  020c  73                    ld      (hl),   e ; low byte of handler address
+    23  020d  23                    inc     hl
+    24  020e  72                    ld      (hl),   d ; high byte
+    25  020f  23                    inc     hl
+    26  0210  10fa                  djnz    FillTable
+    27                          
+    28                          ; Replace the entries for vectors 06h and 08h.
+    29                          ; Vector 06h indexes table bytes 0106h–0107h.
+    30                          ; Vector 08h indexes table bytes 0108h–0109h.
+    31  0212  212802                ld      hl, TimerISR
+    32  0215  220601                ld      (0106h),    hl
+    33                          
+    34  0218  213402                ld      hl, SerialISR
+    35  021b  220801                ld      (0108h),    hl
+    36                          
+    37                          ; I supplies the high byte of the table's page.
+    38  021e  3e01                  ld      a,  01h
+    39  0220  ed47                  ld      i,  a
+    40  0222  ed5e                  im      2
+    41  0224  fb                    ei
+    42                          
+    43                          MainLoop:
+    44  0225  76                    halt ; wait for an interrupt
+    45  0226  18fd                  jr      MainLoop
+    46                          
+    47                          ; Example handler: set a timer flag at 4000h.
+    48                          TimerISR:
+    49  0228  f5                    push    af
+    50  0229  3a0040                ld      a,  (4000h)
+    51  022c  3c                    inc     a
+    52  022d  320040                ld      (4000h),    a
+    53                          ; Acknowledge/clear the timer device here, if required.
+    54  0230  f1                    pop     af
+    55  0231  fb                    ei
+    56  0232  ed4d                  reti
+    57                          
+    58                          ; Example handler: set a serial flag at 4001h.
+    59                          SerialISR:
+    60  0234  f5                    push    af
+    61  0235  3a0140                ld      a,  (4001h)
+    62  0238  3c                    inc     a
+    63  0239  320140                ld      (4001h),    a
+    64                          ; Read/acknowledge the serial device here, if required.
+    65  023c  f1                    pop     af
+    66  023d  fb                    ei
+    67  023e  ed4d                  reti
+    68                          
+    69                          ; Trap unexpected vectors rather than returning to an unhandled source.
+    70                          DefaultISR:
+    71  0240  f3                    di
+    72                          DefaultLoop:
+    73  0241  18fe                  jr      DefaultLoop
+    74                          

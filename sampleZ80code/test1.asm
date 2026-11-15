@@ -1,3 +1,9 @@
+ ; test1
+ ; Copies a "#" character 64 times into memory
+ ; As it copies into memory, it also pushes onto the stack
+ ; Result will be 64 bytes of "#" and 64 words on the stack
+ ; since the stack operates on words
+ ;
         ORG 0x0000
         JP  main ; Jump to starting address
 
