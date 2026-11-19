@@ -7,12 +7,14 @@ ORG     0x0000
     jp  main    ; Jump to main entry point
 
 DATA:
-    DEFW 0x0036
+    DEFW 0x0035
     DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
 
 Destination: EQU 0x0100
 
 main:       ; Main program entry point
+EI ; enable interrupts
+
 ; Copy string from DATA to Destination
 LD  HL, DATA + 2    ; Point to source (2 bytes beyond start of string)
 LD  DE, Destination ; Point to destination

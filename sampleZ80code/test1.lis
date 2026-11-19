@@ -1,26 +1,174 @@
 test1.asm:
-     1                                  ORG 0x0000
-     2  0000  c30400                    JP  main ; Jump to starting address
-     3                          
-     4                          DATA:
-     5  0003  23                        DB  "#"
-     6                          
-     7                          dest:   EQU 0x0100  ; Destination address
-     8                          
-     9                          main:       ; Main program entry point
-    10                          
-    11                          ; First, copy the DATA byte into 64 bytes beginning at Dest
-    12                          ; After each copy, push the B register value onto the stack
-    13  0004  0640                      LD  B,64 ; set loop counter to 64
-    14  0006  0e00                      LD  C, 0
-    15  0008  dd210001                  LD  IX,dest ; load destination address minus 2 bytes to initialize address
-    16  000c  3a0300                    LD  A,(DATA) ; load A with value to copy
-    17                          
-    18                          loop:
-    19  000f  dd7700                    LD  (IX),A ; store contents of A in address pointed to by IX + increment in D
-    20  0012  dd23                      INC IX
-    21  0014  c5                        PUSH BC
-    22  0015  10f8                      DJNZ loop ; decrement counter in B and loop
-    23                          
-    24  0017  76                        HALT   ; done
-    25                          
+     1                          ; test1
+     2                          ; Copies a "#" character 64 times into memory
+     3                          ; As it copies into memory, it also pushes onto the stack
+     4                          ; Result will be 64 bytes of "#" and 64 words on the stack
+     5                          ; since the stack operates on words
+     6                          ;
+     7                          ; Constants
+     8                          IHDLR_UNKNOWN: EQU 0x00
+     9                          IHDLR_TERMINAL_VECTOR: EQU 0x02
+    10                          MONITOR_ROM:   EQU 0x0000
+    11                          INTERRUPT_VECTOR_TABLE: EQU 0X0200
+    12                          INTERRUPT_VECTOR_TABLE_MSB: EQU 0x02
+    13                          DEST1:   EQU 0x4000  ; Destination address for data move tests
+    14                          DEST2:  EQU 0x5000      ; Destination for block move
+    15                          
+    16                          ; 0x0000 - 0x01ff reserved or simulated ROM with System Monitor
+    17  0000  0000000000000000  DEFS 512
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+    18                          ; Interrupt Vector Table
+    19  0200  0000                      DW IHDLR_UNKNOWN        ; vector 0
+    20  0202  1c03                      DW IHDLR_TERMINAL       ; vector 2 - interrupt on keyboard Enter pressed
+    21  0204  0000                      DW IHDLR_UNKNOWN        ; vector 4
+    22                          ; Reserve remainder of block for IV table
+    23  0206  0000000000000000  DEFS 256-6
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000              
+    24                          
+    25                          ; Main code starts here
+    26                          MAIN:       ; Main program entry point 0x300
+    27                          
+    28  0300  3e02                      LD A, INTERRUPT_VECTOR_TABLE_MSB
+    29  0302  ed47                      LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
+    30  0304  fb                        EI      ; Enable interrupts
+    31                          
+    32                          ; First, copy the DATA byte into 64 bytes beginning at Dest
+    33                          ; After each copy, push the B register value onto the stack
+    34  0305  0640                      LD  B,64 ; set loop counter to 64
+    35  0307  0e00                      LD  C, 0
+    36  0309  dd210040                  LD  IX,DEST1 ; load destination address minus 2 bytes to initialize address
+    37  030d  3a3503                    LD  A,(DATA_HASH) ; load A with value to copy
+    38                          
+    39                          LOOP:
+    40  0310  dd7700                    LD  (IX),A ; store contents of A in address pointed to by IX + increment in D
+    41  0313  dd23                      INC IX
+    42  0315  c5                        PUSH BC
+    43  0316  10f8                      DJNZ LOOP ; decrement counter in B and loop
+    44                          
+    45  0318  c30003                    JP MAIN ; repeat forever the main loop to allow for testing of interrupt handler
+    46                          
+    47  031b  76                        HALT   ; done - should never reach here
+    48                          
+    49                          ; Start Interrupt handler code
+    50                          IHDLR_TERMINAL:
+    51  031c  f3                        DI
+    52  031d  f5                        PUSH AF
+    53                                  ; do stuff, for now let us know you got here by placing a 0xff into D register
+    54  031e  16ff                      LD D, 0xff
+    55  0320  cd2703                    CALL MOVEDATA   ; Run a subroutine within the handler
+    56  0323  f1                        POP AF
+    57  0324  fb                        EI
+    58  0325  ed4d                      RETI
+    59                          
+    60                          ; Start Move data block subroutine
+    61                          MOVEDATA:
+    62                                  ; Copy string from DATA to Destination
+    63  0327  213803                    LD  HL, DATA + 2    ; Point to source (2 bytes beyond start of string)
+    64  032a  110050                    LD  DE, DEST2 ; Point to destination
+    65  032d  ed4b3603                  LD  BC, (DATA)      ; Get length of string (stored in first two bytes of data - little endian)
+    66  0331  edb0                      LDIR                ; Move BC bytes from (HL) to (DE)
+    67  0333  ed4d                      RETI
+    68                          
+    69                          
+    70                          ; Data area
+    71  0335  23                DATA_HASH:   DB "#"
+    72                          DATA:
+    73  0336  3500                  DEFW 0x0035
+    74  0338  6162636465666768      DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
+              696a6b6c6d6e6f70  
+              7172737475767778  
+              797a303132333435  
+              3637383900        
+    75                          

@@ -22,3 +22,11 @@ Z80 assembly code is cross-compiled using the open source tool [z88dk](https://g
 # Screenshots
 <img src="images/screen1.png" alt="zen80g Terminal Screen" width="700">
 <img src="images/screen2.png" alt="zen80g Terminal Screen" width="700">
+
+# Assembling sample programs
+`z88dk-z80asm -l -b -o=movedatablock.o movedatablock.asm`
+
+The -b option tells assembler to generate plain binary output without any system headers used by specific simulators.
+
+# Running sample programs
+`zen80g -program movedatablock.o`

@@ -1,23 +1,30 @@
 movedatablock.asm:
-     1                          ORG     0x0000
-     2  0000  c32a00                jp  main    ; Jump to main entry point
-     3                          
-     4                          DATA:
-     5  0003  3600                  DEFW 0x0036
-     6  0005  6162636465666768      DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
+     1                          ; movedatablock
+     2                          ;
+     3                          ; Moves characters from a buffer into a new location
+     4                          ; leaving characters in both locations for comparison
+     5                          ;
+     6                          ORG     0x0000
+     7  0000  c32a00                jp  main    ; Jump to main entry point
+     8                          
+     9                          DATA:
+    10  0003  3500                  DEFW 0x0035
+    11  0005  6162636465666768      DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
               696a6b6c6d6e6f70  
               7172737475767778  
               797a303132333435  
               3637383900        
-     7                          
-     8                          Destination: EQU 0x0100
-     9                          
-    10                          main:       ; Main program entry point
-    11                          ; Copy string from DATA to Destination
-    12  002a  210500            LD  HL, DATA + 2    ; Point to source (2 bytes beyound start of string)
-    13  002d  110001            LD  DE, Destination ; Point to destination
-    14  0030  ed4b0300          LD  BC, (DATA)      ; Get length of string (stored in first two bytes of data - little endian)
-    15  0034  edb0              LDIR                ; Move BC bytes from (HL) to (DE)
-    16                          
-    17  0036  76                HALT
-    18                          
+    12                          
+    13                          Destination: EQU 0x0100
+    14                          
+    15                          main:       ; Main program entry point
+    16  002a  fb                EI ; enable interrupts
+    17                          
+    18                          ; Copy string from DATA to Destination
+    19  002b  210500            LD  HL, DATA + 2    ; Point to source (2 bytes beyond start of string)
+    20  002e  110001            LD  DE, Destination ; Point to destination
+    21  0031  ed4b0300          LD  BC, (DATA)      ; Get length of string (stored in first two bytes of data - little endian)
+    22  0035  edb0              LDIR                ; Move BC bytes from (HL) to (DE)
+    23                          
+    24  0037  76                HALT
+    25                          

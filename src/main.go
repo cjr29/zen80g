@@ -4,19 +4,28 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"os"
 	"strconv"
 	"strings"
 	"sync/atomic"
-	"time"
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 
-	"github.com/ha1tch/zen80/io"
 	"github.com/ha1tch/zen80/memory"
 	"github.com/ha1tch/zen80/z80"
 )
+
+const (
+	// The address of the interrupt service routine for the demo program.
+	interruptVectorTable = 0xEE00
+	// The interrupt vector for the demo program.
+	vector = 0x02
+	gray   = tcell.ColorGray
+)
+
+var buttons *tview.Form
+var running atomic.Bool
+var pcAddressInput *tview.InputField
 
 func main() {
 	/****************************************************************/
@@ -27,8 +36,12 @@ func main() {
 
 	// Create memory and I/O
 	mem := memory.NewRAM()
-	io := io.NewNullIO()
-	cpu := z80.New(mem, io)
+	terminalController := newInterruptController()
+	cpu := z80.New(mem, terminalController)
+	// Set Interrupt Mode to Mode 2, and Interrupt Vector to 0xE0 (default)
+	cpu.IM = 2
+	// Set the terminal's interrupt vector and install its handler address in the Z80's Mode 2 vector table.
+	terminalController.SetMode2Handler(mem, cpu.I, vector, interruptVectorTable)
 
 	// Load a default program for demo purposes. This program adds 5 and 3 and halts.
 	program := []uint8{
@@ -39,13 +52,14 @@ func main() {
 	}
 
 	// Load program from file if specified as option. If not, use the default program above.
+	startupStatus := ""
 	if *programPath != "" {
 		var err error
 		program, err = loadProgramFromFile(*programPath)
 		if err != nil {
 			log.Fatal(err)
 		}
-		fmt.Printf("Loaded program %q (%d bytes)\n", *programPath, len(program))
+		startupStatus = fmt.Sprintf("Loaded program %q (%d bytes)", *programPath, len(program))
 	}
 	startAddress := uint16(0)
 	displayAddress := startAddress
@@ -55,6 +69,7 @@ func main() {
 	/****************************************************************/
 	/********************      Set up GUI    ************************/
 	/****************************************************************/
+
 	app := tview.NewApplication().SetTitle("zen80 - Z80 Emulator")
 
 	//processorMemory := viewgrid("Memory")
@@ -62,36 +77,87 @@ func main() {
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWrap(false).
-		SetScrollable(false)
+		SetScrollable(true)
 	processorMemory.SetBorder(true).SetTitle("Memory")
+	processorMemory.SetBackgroundColor(gray)
 
 	registers := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true)
 	registers.SetBorder(true).SetTitle("Registers")
+	registers.SetBackgroundColor(gray)
 
 	stack := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetDynamicColors(true).
 		SetWrap(false).
-		SetScrollable(false)
+		SetScrollable(true)
 	stack.SetBorder(true).SetTitle("Stack")
+	stack.SetBackgroundColor(gray)
 
-	status := tview.NewTextView().SetTextAlign(tview.AlignLeft)
-	status.SetText(fmt.Sprintf("CPU status: ")).SetTextColor(tcell.ColorRed)
+	status := tview.NewTextView().
+		SetTextAlign(tview.AlignLeft).
+		SetScrollable(true)
+	status.SetBorder(true).SetTitle("Simulator Status")
+	status.SetBackgroundColor(gray)
+	if startupStatus != "" {
+		appendStatus(status, startupStatus)
+	}
+
+	terminalInput := tview.NewInputField().
+		SetLabel("$> ").
+		SetPlaceholder("Type text and press Enter")
+	terminalInput.SetLabelStyle(
+		terminalInput.GetLabelStyle().Background(gray),
+	)
+	terminalInput.SetLabelColor(tcell.ColorYellow)
+	terminalInput.SetBorder(true).SetTitle("Terminal Input")
+	terminalInput.SetPlaceholderTextColor(tcell.ColorWhite)
+	terminalInput.SetBackgroundColor(gray)
+	terminalInput.SetFieldBackgroundColor(tcell.ColorWhite)
+	terminalInput.SetFieldTextColor(gray)
+	terminalInput.SetDoneFunc(func(key tcell.Key) {
+		if key != tcell.KeyEnter {
+			return
+		}
+		appendStatus(status, terminalInput.GetText()) // Echo input to status window
+		// Check for special commands
+		command := strings.TrimSpace(terminalInput.GetText())
+		switch command {
+		case "#reset":
+			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
+		case "#step":
+			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
+		case "#run":
+			if !running.CompareAndSwap(false, true) {
+				appendStatus(status, "CPU is already running.")
+				return
+			}
+			appendStatus(status, fmt.Sprintf("Running from address %04X.", cpu.PC))
+			setRunControlsEnabled(buttons, false)
+			app.SetFocus(buttons.GetButton(3))
+			go runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
+		case "!int":
+			// Trigger the terminal's interrupt handler
+			cpu.INT = true
+		default:
+			appendStatus(status, fmt.Sprintf("Unknown command: %q", command))
+		}
+		// Clear the input field after pressing Enter
+		terminalInput.SetText("")
+	})
 
 	pages := tview.NewPages()
-	var buttons *tview.Form
-	var running atomic.Bool
-	var pcAddressInput *tview.InputField
+
 	addressInput := tview.NewInputField().
 		SetLabel(fmt.Sprintf("Load at %04X: ", startAddress)).
 		SetPlaceholder(fmt.Sprintf("%04X", startAddress)).
-		SetPlaceholderTextColor(tcell.ColorBlack).
+		SetPlaceholderTextColor(tcell.ColorWhite).
 		SetFieldWidth(4).
 		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
 			return isHexAddressInput(textToCheck)
 		})
+	addressInput.SetBackgroundColor(gray)
 	addressInput.SetChangedFunc(func(text string) {
 		if len(text) != 4 {
 			return
@@ -113,18 +179,20 @@ func main() {
 		addressInput.SetLabel(fmt.Sprintf("Load at %04X: ", startAddress))
 		addressInput.SetPlaceholder(fmt.Sprintf("%04X", startAddress))
 		addressInput.SetText("")
-		status.SetText(fmt.Sprintf("Program load address set to %04X. Current program is unchanged.", startAddress))
+		appendStatus(status, fmt.Sprintf("Program load address set to %04X. Current program is unchanged.", startAddress))
 	})
 
+	// Create a form for loading a Z80 binary program from a file.
 	programPathInput := tview.NewInputField().
 		SetLabel("Z80 binary path: ").
 		SetFieldWidth(60)
+	programPathInput.SetBackgroundColor(gray)
 	loadProgramForm := tview.NewForm().
 		AddFormItem(programPathInput).
 		AddButton("Load", func() {
 			path := strings.TrimSpace(programPathInput.GetText())
 			if path == "" {
-				status.SetText("Enter the path to a Z80 binary file.")
+				appendStatus(status, "Enter the path to a Z80 binary file.")
 				pages.SwitchToPage("main")
 				app.SetFocus(buttons)
 				return
@@ -132,29 +200,29 @@ func main() {
 
 			loadedProgram, err := loadProgramFromFile(path)
 			if err != nil {
-				status.SetText(err.Error())
+				appendStatus(status, err.Error())
 				pages.SwitchToPage("main")
 				app.SetFocus(buttons)
 				return
 			}
 			if len(loadedProgram) > (1<<16)-int(startAddress) {
-				status.SetText(fmt.Sprintf("Program does not fit in memory at address %04X.", startAddress))
+				appendStatus(status, fmt.Sprintf("Program does not fit in memory at address %04X.", startAddress))
 				pages.SwitchToPage("main")
 				app.SetFocus(buttons)
 				return
 			}
 
+			processorMemory.Clear()
 			program = loadedProgram
+			cpu.Reset()
+			registers.Clear()
 			mem.Clear()
 			mem.Load(startAddress, program)
-			cpu.Reset()
 			cpu.PC = startAddress
-			processorMemory.Clear()
-			registers.Clear()
-			refreshMemoryDump(processorMemory, mem, displayAddress)
+			refreshMemoryDump(processorMemory, mem)
 			updatePCAddressInput(pcAddressInput, cpu.PC)
 			registerdump(registers, cpu)
-			status.SetText(fmt.Sprintf("Loaded %q at address %04X (%d bytes).", path, startAddress, len(program)))
+			appendStatus(status, fmt.Sprintf("Loaded %q at address %04X (%d bytes).", path, startAddress, len(program)))
 			pages.SwitchToPage("main")
 			app.SetFocus(buttons)
 		}).
@@ -163,6 +231,7 @@ func main() {
 			app.SetFocus(buttons)
 		})
 	loadProgramForm.SetBorder(true).SetTitle("Load Z80 Program")
+	loadProgramForm.SetBackgroundColor(gray)
 	loadProgramForm.SetCancelFunc(func() {
 		pages.SwitchToPage("main")
 		app.SetFocus(buttons)
@@ -171,11 +240,13 @@ func main() {
 	displayAddressInput := tview.NewInputField().
 		SetLabel(fmt.Sprintf("Display at %04X: ", displayAddress)).
 		SetPlaceholder(fmt.Sprintf("%04X", displayAddress)).
-		SetPlaceholderTextColor(tcell.ColorBlack).
+		SetPlaceholderTextColor(tcell.ColorWhite).
 		SetFieldWidth(4).
 		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
 			return isHexAddressInput(textToCheck)
 		})
+	displayAddressInput.SetBackgroundColor(gray)
+	var scrollMemoryToRow func(row int)
 	displayAddressInput.SetChangedFunc(func(text string) {
 		if len(text) != 4 {
 			return
@@ -186,9 +257,6 @@ func main() {
 		}
 		newAddress := uint16(address)
 		if newAddress == displayAddress {
-			return
-		}
-		if running.Load() {
 			displayAddressInput.SetText("")
 			return
 		}
@@ -197,14 +265,96 @@ func main() {
 		displayAddressInput.SetLabel(fmt.Sprintf("Display at %04X: ", displayAddress))
 		displayAddressInput.SetPlaceholder(fmt.Sprintf("%04X", displayAddress))
 		displayAddressInput.SetText("")
-		refreshMemoryDump(processorMemory, mem, displayAddress)
-		status.SetText(fmt.Sprintf("Displaying memory from address %04X.", displayAddress))
+		refreshMemoryDump(processorMemory, mem)
+		scrollMemoryToRow(int(displayAddress) / 16)
+		appendStatus(status, fmt.Sprintf("Displaying memory from address %04X.", displayAddress))
+	})
+
+	scrollMemoryToRow = func(row int) {
+		const memoryRows = 1 << 12
+		_, _, _, height := processorMemory.GetInnerRect()
+		if height < 1 {
+			height = 1
+		}
+		maxRow := memoryRows - height
+		if maxRow < 0 {
+			maxRow = 0
+		}
+		if row < 0 {
+			row = 0
+		} else if row > maxRow {
+			row = maxRow
+		}
+
+		_, column := processorMemory.GetScrollOffset()
+		processorMemory.ScrollTo(row, column)
+		displayAddress = uint16(row * 16)
+		displayAddressInput.SetLabel(fmt.Sprintf("Display at %04X: ", displayAddress))
+		displayAddressInput.SetPlaceholder(fmt.Sprintf("%04X", displayAddress))
+		displayAddressInput.SetText("")
+	}
+
+	processorMemory.SetInputCapture(func(event *tcell.EventKey) *tcell.EventKey {
+		row, _ := processorMemory.GetScrollOffset()
+		_, _, _, height := processorMemory.GetInnerRect()
+		pageSize := height
+		if pageSize < 1 {
+			pageSize = 1
+		}
+		switch event.Key() {
+		case tcell.KeyUp:
+			row--
+		case tcell.KeyDown:
+			row++
+		case tcell.KeyPgUp, tcell.KeyCtrlB:
+			row -= pageSize
+		case tcell.KeyPgDn, tcell.KeyCtrlF:
+			row += pageSize
+		case tcell.KeyHome:
+			row = 0
+		case tcell.KeyEnd:
+			row = (1 << 12) - height
+		case tcell.KeyRune:
+			switch event.Rune() {
+			case 'k':
+				row--
+			case 'j':
+				row++
+			case 'g':
+				row = 0
+			case 'G':
+				row = (1 << 12) - height
+			default:
+				return event
+			}
+		default:
+			return event
+		}
+		scrollMemoryToRow(row)
+		return nil
+	})
+	processorMemory.SetMouseCapture(func(action tview.MouseAction, event *tcell.EventMouse) (tview.MouseAction, *tcell.EventMouse) {
+		x, y := event.Position()
+		if !processorMemory.InRect(x, y) {
+			return action, event
+		}
+		row, _ := processorMemory.GetScrollOffset()
+		switch action {
+		case tview.MouseScrollUp:
+			row--
+		case tview.MouseScrollDown:
+			row++
+		default:
+			return action, event
+		}
+		scrollMemoryToRow(row)
+		return tview.MouseConsumed, nil
 	})
 
 	stackAddressInput := tview.NewInputField().
 		SetLabel(fmt.Sprintf("Stack at %04X: ", stackStartAddress)).
 		SetPlaceholder(fmt.Sprintf("%04X", stackStartAddress)).
-		SetPlaceholderTextColor(tcell.ColorBlack).
+		SetPlaceholderTextColor(tcell.ColorWhite).
 		SetFieldWidth(4).
 		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
 			return isHexAddressInput(textToCheck)
@@ -234,13 +384,13 @@ func main() {
 		refreshStackDump(stack, mem, cpu, stackStartAddress)
 		registers.Clear()
 		registerdump(registers, cpu)
-		status.SetText(fmt.Sprintf("Stack start address set to %04X.", stackStartAddress))
+		appendStatus(status, fmt.Sprintf("Stack start address set to %04X.", stackStartAddress))
 	})
 
 	pcAddressInput = tview.NewInputField().
 		SetLabel(fmt.Sprintf("PC %04X: ", cpu.PC)).
 		SetPlaceholder(fmt.Sprintf("%04X", cpu.PC)).
-		SetPlaceholderTextColor(tcell.ColorBlack).
+		SetPlaceholderTextColor(tcell.ColorWhite).
 		SetFieldWidth(4).
 		SetAcceptanceFunc(func(textToCheck string, _ rune) bool {
 			return isHexAddressInput(textToCheck)
@@ -268,14 +418,14 @@ func main() {
 		pcAddressInput.SetText("")
 		registers.Clear()
 		registerdump(registers, cpu)
-		status.SetText(fmt.Sprintf("Program counter set to %04X.", cpu.PC))
+		appendStatus(status, fmt.Sprintf("Program counter set to %04X.", cpu.PC))
 	})
 
-	// Two buttons inside one grid cell.
+	// Generate Buttons form with Step, Run, Reset, Exit, and Load Program buttons.
 	buttons = tview.NewForm().
 		SetHorizontal(true).
 		SetButtonsAlign(tview.AlignLeft).
-		SetButtonBackgroundColor(tcell.ColorBlack).
+		SetButtonBackgroundColor(tcell.ColorGray).
 		SetFieldBackgroundColor(tcell.ColorWhite).
 		SetFieldTextColor(tcell.ColorBlack).
 		AddFormItem(addressInput).
@@ -292,7 +442,7 @@ func main() {
 			if !running.CompareAndSwap(false, true) {
 				return
 			}
-			status.SetText(fmt.Sprintf("Running from address %04X.", cpu.PC))
+			appendStatus(status, fmt.Sprintf("Running from address %04X.", cpu.PC))
 			setRunControlsEnabled(buttons, false)
 			app.SetFocus(buttons.GetButton(3))
 			go runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
@@ -319,14 +469,23 @@ func main() {
 				Background(tcell.ColorYellow),
 		)
 	buttons.SetFocus(0)
+	buttons.SetBackgroundColor(gray)
 	buttons.SetBorder(true).SetTitle("Commands")
 
+	// Create tview grid layout for the main page. The grid has 7 rows and 3 columns.
+	// The first row is for the buttons form, the second row is for the status text view,
+	// and the third row is for the terminal input field. The first column is for the processor
+	// memory text view, the second column is for the registers text view, and the third column
+	// is for the stack text view.
 	grid := tview.NewGrid().
-		SetRows(7, 0, 3).
+		SetRows(7, 0, 10, 5).
 		SetColumns(75, 32, -4).
 		SetBorders(true).
 		AddItem(buttons, 0, 0, 1, 3, 0, 0, true).
-		AddItem(status, 2, 0, 1, 3, 0, 0, false)
+		AddItem(status, 2, 0, 1, 3, 0, 0, false).
+		AddItem(terminalInput, 3, 0, 1, 3, 0, 0, true)
+
+	grid.SetBackgroundColor(gray)
 
 	// Layout for screens narrower than 100 cells (processorMemory and stack are hidden).
 	grid.AddItem(processorMemory, 0, 0, 0, 0, 0, 0, false).
@@ -334,183 +493,21 @@ func main() {
 		AddItem(stack, 0, 0, 0, 0, 0, 0, false)
 
 	// Layout for screens wider than 100 cells.
-	grid.AddItem(processorMemory, 1, 0, 1, 1, 0, 100, false).
+	grid.AddItem(processorMemory, 1, 0, 1, 1, 0, 100, true).
 		AddItem(registers, 1, 1, 1, 1, 0, 100, false).
-		AddItem(stack, 1, 2, 1, 1, 0, 100, false)
+		AddItem(stack, 1, 2, 1, 1, 0, 100, true)
 
 	pages.AddPage("main", grid, true, true).
 		AddPage("loadProgram", loadProgramForm, true, false)
 
-	refreshMemoryDump(processorMemory, mem, displayAddress)
+	refreshMemoryDump(processorMemory, mem)
 	refreshStackDump(stack, mem, cpu, stackStartAddress)
 	registerdump(registers, cpu)
 
 	if err := app.SetRoot(pages, true).
-		SetFocus(grid).
+		SetFocus(terminalInput).
 		EnableMouse(true).
 		Run(); err != nil {
 		log.Fatal(err)
 	}
-}
-
-func refreshMemoryDump(view *tview.TextView, mem *memory.RAM, startAddress uint16) {
-	const bytesPerRow = 16
-	_, _, _, height := view.GetInnerRect()
-	length := height * bytesPerRow
-	if remaining := (1 << 16) - int(startAddress); length > remaining {
-		length = remaining
-	}
-
-	view.Clear()
-	memorydump(view, mem, startAddress, length)
-}
-
-func refreshStackDump(view *tview.TextView, mem *memory.RAM, cpu *z80.Z80, stackStartAddress uint16) {
-	_, _, _, height := view.GetInnerRect()
-	view.Clear()
-	rowCount := height - 1
-	if rowCount < 0 {
-		rowCount = 0
-	}
-	dumpstack(view, mem, cpu.SP, stackStartAddress, rowCount)
-}
-
-func isHexAddressInput(text string) bool {
-	if len(text) > 4 {
-		return false
-	}
-	for _, char := range text {
-		if !(char >= '0' && char <= '9' ||
-			char >= 'a' && char <= 'f' ||
-			char >= 'A' && char <= 'F') {
-			return false
-		}
-	}
-	return true
-}
-
-func setRunControlsEnabled(buttons *tview.Form, enabled bool) {
-	const exitButtonIndex = 3
-	for i := 0; i < buttons.GetButtonCount(); i++ {
-		if i != exitButtonIndex {
-			buttons.GetButton(i).SetDisabled(!enabled)
-		}
-	}
-}
-
-func updatePCAddressInput(input *tview.InputField, pc uint16) {
-	input.SetLabel(fmt.Sprintf("PC %04X: ", pc))
-	input.SetPlaceholder(fmt.Sprintf("%04X", pc))
-}
-
-func loadProgramFromFile(path string) ([]uint8, error) {
-	program, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read program %q: %w", path, err)
-	}
-	if len(program) > 1<<16 {
-		return nil, fmt.Errorf("program %q is %d bytes; maximum size is 65536 bytes", path, len(program))
-	}
-	return program, nil
-}
-
-func stepCPU(cpu *z80.Z80,
-	app *tview.Application,
-	status *tview.TextView,
-	processorMemory *tview.TextView, mem *memory.RAM,
-	stack *tview.TextView,
-	registers *tview.TextView, displayAddress, stackStartAddress uint16,
-	pcAddressInput *tview.InputField) {
-
-	cycles := cpu.Step()
-	updatePCAddressInput(pcAddressInput, cpu.PC)
-	status.Clear()
-	processorMemory.Clear()
-	registers.Clear()
-	fmt.Fprintln(status, fmt.Sprintf("Single Step, cycles: %d", cycles))
-	refreshMemoryDump(processorMemory, mem, displayAddress)
-	refreshStackDump(stack, mem, cpu, stackStartAddress)
-	registerdump(registers, cpu)
-}
-
-func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
-	processorMemory *tview.TextView, mem *memory.RAM,
-	stack *tview.TextView,
-	registers *tview.TextView, displayAddress, stackStartAddress uint16,
-	buttons *tview.Form, running *atomic.Bool, pcAddressInput *tview.InputField) {
-	cycles := 0
-	lastRefresh := time.Now()
-	for !cpu.Halted && running.Load() {
-		cycles = cycles + cpu.Step()
-		if time.Since(lastRefresh) >= 100*time.Millisecond {
-			app.QueueUpdateDraw(func() {
-				if !running.Load() {
-					return
-				}
-				status.Clear()
-				fmt.Fprintf(status, "Running, cycles: %d\n", cycles)
-				processorMemory.Clear()
-				registers.Clear()
-				updatePCAddressInput(pcAddressInput, cpu.PC)
-				refreshMemoryDump(processorMemory, mem, displayAddress)
-				refreshStackDump(stack, mem, cpu, stackStartAddress)
-				registerdump(registers, cpu)
-			})
-			if !running.Load() {
-				return
-			}
-			lastRefresh = time.Now()
-		}
-	}
-	if !running.Load() {
-		return
-	}
-
-	app.QueueUpdateDraw(func() {
-		if !running.Load() {
-			return
-		}
-		status.Clear()
-		processorMemory.Clear()
-		registers.Clear()
-		updatePCAddressInput(pcAddressInput, cpu.PC)
-		fmt.Fprintf(status, "Halted, cycles: %d\n", cycles)
-		refreshMemoryDump(processorMemory, mem, displayAddress)
-		refreshStackDump(stack, mem, cpu, stackStartAddress)
-		registerdump(registers, cpu)
-		setRunControlsEnabled(buttons, true)
-		running.Store(false)
-		app.SetFocus(buttons)
-	})
-}
-
-func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
-	processorMemory *tview.TextView, mem *memory.RAM, stack *tview.TextView,
-	registers *tview.TextView, displayAddress, stackStartAddress uint16,
-	pcAddressInput *tview.InputField) {
-	mem.Clear()
-	cpu.Reset()
-	cpu.A, cpu.F = 0, 0
-	cpu.B, cpu.C = 0, 0
-	cpu.D, cpu.E = 0, 0
-	cpu.H, cpu.L = 0, 0
-	cpu.A_, cpu.F_ = 0, 0
-	cpu.B_, cpu.C_ = 0, 0
-	cpu.D_, cpu.E_ = 0, 0
-	cpu.H_, cpu.L_ = 0, 0
-	cpu.IXH, cpu.IXL = 0, 0
-	cpu.IYH, cpu.IYL = 0, 0
-	cpu.WZ = 0
-	cpu.SP = stackStartAddress
-	cpu.PC = 0
-	updatePCAddressInput(pcAddressInput, cpu.PC)
-	cpu.NMI = false
-	cpu.INT = false
-	status.Clear()
-	registers.Clear()
-	processorMemory.Clear()
-	refreshMemoryDump(processorMemory, mem, displayAddress)
-	refreshStackDump(stack, mem, cpu, stackStartAddress)
-	registerdump(registers, cpu)
-	fmt.Fprintln(status, "CPU reset; memory cleared.")
 }

@@ -3,37 +3,29 @@ package main
 import (
 	"fmt"
 	"io"
-	"strings"
 
 	"github.com/ha1tch/zen80/memory"
 )
 
 func dumpstack(w io.Writer, mem *memory.RAM, stackPointer, stackStart uint16, rowCount int) {
-	const bytesPerRow = 8
+	const bytesPerWord = 2
 
-	fmt.Fprintf(w, "SP: %04x, [grows high to low]", stackPointer)
+	fmt.Fprintf(w, "SP: %04x, [stack start: %04x]", stackPointer, stackStart)
 	for row := 0; row < rowCount; row++ {
-		rowAddress := int(stackStart) - row*bytesPerRow
-		if rowAddress < 0 {
+		wordAddress := int(stackPointer) + row*bytesPerWord
+		if wordAddress+bytesPerWord > int(stackStart) || wordAddress+bytesPerWord > 1<<16 {
 			break
 		}
 		fmt.Fprintln(w)
 
-		highlight := int(stackPointer) <= rowAddress && int(stackPointer) >= rowAddress-bytesPerRow+1
-		if highlight {
+		if row == 0 {
 			fmt.Fprint(w, "[yellow]")
 		}
-		fmt.Fprintf(w, "%04x  ", rowAddress)
-		var values strings.Builder
-		for i := 0; i < bytesPerRow; i++ {
-			if i > 0 {
-				values.WriteByte(' ')
-			}
-			address := uint16(rowAddress - i)
-			fmt.Fprintf(&values, "%02x", mem.Read(address))
-		}
-		fmt.Fprint(w, values.String())
-		if highlight {
+		lowByte := mem.Read(uint16(wordAddress))
+		highByte := mem.Read(uint16(wordAddress + 1))
+		word := uint16(highByte)<<8 | uint16(lowByte)
+		fmt.Fprintf(w, "%04x  %04x", wordAddress, word)
+		if row == 0 {
 			fmt.Fprint(w, "[-]")
 		}
 	}
