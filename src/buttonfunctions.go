@@ -60,19 +60,20 @@ func runCPU(cpu *z80.Z80, controller *interruptController, output *terminalOutpu
 			})
 		}
 		updateTerminalInterrupt(cpu, controller, &terminalInterruptActive)
-		if time.Since(lastRefresh) >= 5000*time.Millisecond {
+		if time.Since(lastRefresh) >= 100*time.Millisecond {
 			app.QueueUpdateDraw(func() {
 				if !running.Load() {
 					return
 				}
 				// appendStatus(status, fmt.Sprintf("Running, cycles: %d", cycles))
-				appendStatus(status, fmt.Sprintf("Running ... %v", time.Now().Format("15:04:05")))
+				// appendStatus(status, fmt.Sprintf("Running ... %v", time.Now().Format("15:04:05")))
 				processorMemory.Clear()
+				stack.Clear()
 				registers.Clear()
+				registerdump(registers, cpu)
 				updatePCAddressInput(pcAddressInput, cpu.PC)
 				refreshMemoryDump(processorMemory, mem)
 				refreshStackDump(stack, mem, cpu, stackStartAddress)
-				registerdump(registers, cpu)
 			})
 			lastRefresh = time.Now()
 		}
