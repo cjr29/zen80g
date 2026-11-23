@@ -12,7 +12,7 @@ Use the **Load at** field on the main screen to view or change the address for f
 
 ### Terminal Input to Z80 Programs
 
-Enter ordinary text in the **Terminal Input** field and press Enter to queue it for the guest program. The input device raises a maskable interrupt while characters are waiting. Read characters one at a time from I/O port `00` using `IN A,(0)`; each submitted line ends with line feed (`0x0A`). Write the byte in A to the status pane with `OUT (0),A`. Commands such as `#run`, `#step`, `#reset`, and `!int` remain simulator commands and are not queued as text.
+Enter ordinary text in the **Terminal Input** field and press Enter to submit the complete line to the guest program. The input device raises a maskable interrupt only after Enter submits the line. Read characters one at a time from I/O port `00` using `IN A,(0)`; each submitted line, including an empty line, ends with line feed (`0x0A`). Write the byte in A to the status pane with `OUT (0),A`. Commands such as `#run`, `#step`, `#reset`, and `!int` remain simulator commands and are not queued as text.
 
 Since this is a GUI-based project, the main() function will be the user presentation with a grid-style layout on the terminal so it can be run without having a desktop environment. Button widgets on the GUI will support Single-Step, Run, and other zen80 functions. A section of the grid display will provide hex and ASCII inspection of the Z80 memory. Z80 register content will be updated in real-time. I'm adding the ability to load assembled object code from a file directly into the Z80 memory at a specified address. I will attempt to keep this project linked to the z80 project to take advantage of any updates it provides.
 

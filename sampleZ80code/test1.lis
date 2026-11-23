@@ -11,7 +11,7 @@ test1.asm:
     10                          MONITOR_ROM:   EQU 0x0000
     11                          INTERRUPT_VECTOR_TABLE: EQU 0X0200
     12                          INTERRUPT_VECTOR_TABLE_MSB: EQU 0x02
-    13                          DEST:   EQU 0x4000  ; Destination address for data move tests
+    13                          TERMINAL_PORT   EQU 0x00
     14                          
     15                          ; 0x0000 - 0x01ff reserved for simulated ROM with System Monitor
     16  0000  0000000000000000  DEFS 512
@@ -81,7 +81,7 @@ test1.asm:
     17                          ; 0x0200 - 0x2ff reserved for interrupt vector table
     18                          ; Interrupt Vector Table
     19                                  ; First 3 words - 2 byte address per vector on even boundary
-    20  0200  2003                      DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
+    20  0200  1003                      DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
     21  0202  0000                      DW IHDLR_UNKNOWN        ; vector 2
     22  0204  0000                      DW IHDLR_UNKNOWN        ; vector 4
     23                          ; Reserve remainder of block for IV table
@@ -135,72 +135,56 @@ test1.asm:
     40  030c  00                        NOP
     41  030d  c30803                    JP WAIT
     42                          
-    43                          ; First, copy the DATA byte into 64 bytes beginning at Dest
-    44                          ; After each copy, push the B register value onto the stack
-    45  0310  0624              COPY:   LD  B,36 ; set loop counter to 36 characters
-    46  0312  210040                    LD  HL,DEST ; load destination address
-    47  0315  3a3403                    LD  A,(HASH) ; load A with value to copy
-    48                          
-    49                          COPY_LOOP:
-    50  0318  77                        LD  (HL),A ; store contents of A in address pointed to by IX + increment in D
-    51  0319  23                        INC HL
-    52  031a  10fc                      DJNZ COPY_LOOP ; decrement counter in B and loop
-    53                          
-    54                                  ; finished copy loop, now repeat forever for debugging interrupts
-    55  031c  c31003                    JP COPY ; repeat forever the main loop to allow for testing of interrupt handler
+    43                          ; Start Interrupt handler code
+    44                          IHDLR_TERMINAL:
+    45  0310  f3                        DI
+    46  0311  f5                        PUSH AF
+    47  0312  d5                        PUSH DE
+    48  0313  ed5b2403                  LD DE, (INT_COUNT)
+    49  0317  13                        INC DE          ; increment interrupt count
+    50  0318  ed532403                  LD (INT_COUNT), DE
+    51  031c  cd2603                    CALL PROCESS_LINE      ; Process the characters from the terminal
+    52  031f  d1                        POP DE
+    53  0320  f1                        POP AF
+    54  0321  fb                        EI
+    55  0322  ed4d                      RETI
     56                          
-    57  031f  76                        HALT   ; done - should never reach here. HALT as a precaution.
-    58                          
-    59                          ; Start Interrupt handler code
-    60                          IHDLR_TERMINAL:
-    61  0320  f3                        DI
-    62  0321  f5                        PUSH AF
-    63  0322  d5                        PUSH DE
-    64  0323  ed5b5b03                  LD DE, (INT_COUNT)
-    65  0327  db00                      IN A,(0)        ; get next available character from terminal port 0
-    66  0329  13                        INC DE          ; increment interrupt count
-    67  032a  ed535b03                  LD (INT_COUNT), DE
-    68                                  ; Append char to input buffer for monitor program use
-    69  032e  d300                      OUT (0),A       ; write the character to port 0 (terminal display)
-    70  0330  f1                        POP AF
-    71  0331  fb                        EI
-    72  0332  ed4d                      RETI
-    73                          
-    74                          ; Data area - CONSTANTS
-    75  0334  23                HASH:           DB "#"
-    76  0335  6162636465666768  DATA:           DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
-              696a6b6c6d6e6f70  
-              7172737475767778  
-              797a303132333435  
-              3637383900        
-    77  035a  0a                NEWLINE:        DB 0x0A
-    78  035b  0000              INT_COUNT:      DW 0x0000       ; var - stroes count of interrupts
-    79                          
-    80                          ; Subroutines
-    81                          ;
-    82                          ; CHECK_MONITOR_CMD
-    83                          ; Should this line be directed to the system monitor?
-    84                          ; Tets character in A for '#'
-    85                          CHECK_MON_CMD:
-    86  035d  f5                        PUSH AF ; Save status for return
-    87  035e  fe23                      CP 0x23 ; Is this a # sign?
-    88  0360  ca6503                    JP Z, MON_CMD ; Send to Monitor Command Handler
-    89  0363  f1                        POP AF
-    90  0364  c9                        RET     ; Not monitor command, return to interrupt handler
-    91                          MON_CMD:
-    92  0365  cd6903                    Call MONITOR_CMD_HNDLR   ; Handle monitor command
-    93  0368  c9                        RET     ; Return to interrupt handler
-    94                          
-    95                          ; MONITOR_CMD_HNDLR
-    96                          MONITOR_CMD_HNDLR:
-    97  0369  f5                        PUSH AF
-    98  036a  3e23                      LD A, '#'
-    99  036c  d300                      OUT (0), A    ; Write a monitor line start symbol
-   100  036e  d300               LOOP_READ_CMD:       OUT (0), A      ; Write the command letters
-   101  0370  db00                      IN A, (0)       ; Get next char
-   102  0372  d300                      OUT (0), A
-   103  0374  fe0a                      CP A, 0x0A    ; If line feed, done
-   104  0376  c26e03                    JP NZ, LOOP_READ_CMD           ; Not end, keep reading
-   105  0379  f1                        POP AF
-   106  037a  c9                        RET
-   107                          
+    57                          ; Data area - CONSTANTS
+    58                          HASH:           EQU '#'
+    59                          NEWLINE:        EQU 0x0A
+    60                          RIGHT_ANGLE_BRACKET     EQU '>'
+    61  0324  0000              INT_COUNT:      DW 0x0000       ; var - stores count of interrupts
+    62                          
+    63                          ; Subroutine that retrieves and tests terminal lines
+    64                          PROCESS_LINE:
+    65  0326  db00                      IN A,(TERMINAL_PORT)        ; get next available character from terminal port 0
+    66                                  ; Test for monitor command, if so, call monitor handler
+    67                                  ; otherwise just echo the character until NL
+    68  0328  fe23                      CP HASH         ; Is this a monitor command line?
+    69  032a  ca3703                    JP Z, MON_CMD   ; Handle as monitor cmd
+    70                                  ; Not a monitor command, keep reading chars
+    71                                  ; If this was a NL, we are done, return from interrupt
+    72  032d  fe0a                      CP NEWLINE
+    73  032f  ca4c03                    JP Z, END_TERMIO_IH
+    74                                  ; Not end of terminal line, keep reading chars
+    75  0332  d300                      OUT (TERMINAL_PORT),A
+    76  0334  c34303                    JP FINISH_LINE
+    77                          
+    78                          MON_CMD:
+    79  0337  cd3d03                    Call MONITOR_CMD_HNDLR   ; Handle monitor command
+    80  033a  c34c03                    JP END_TERMIO_IH     ; Return to interrupt handler
+    81                          ; MONITOR_CMD_HNDLR
+    82                          MONITOR_CMD_HNDLR:
+    83  033d  f5                        PUSH AF
+    84  033e  3e3e                      LD A, RIGHT_ANGLE_BRACKET
+    85  0340  d300                      OUT (TERMINAL_PORT), A    ; Write a monitor line start symbol
+    86  0342  f1                        POP AF
+    87                          FINISH_LINE:    ; process remaining chars from terminal
+    88  0343  db00                      IN A, (TERMINAL_PORT)       ; Get next char
+    89  0345  d300                      OUT (TERMINAL_PORT), A
+    90  0347  fe0a                      CP A, NEWLINE    ; If line feed, done
+    91  0349  c24303                    JP NZ, FINISH_LINE           ; Not end, keep reading
+    92                          END_TERMIO_IH:
+    93  034c  d300                      OUT (TERMINAL_PORT), A ; output the NL and return
+    94  034e  c9                        RET
+    95                          

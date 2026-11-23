@@ -57,9 +57,7 @@ func TestInterruptControllerMode2RequiresMemory(t *testing.T) {
 
 func TestInterruptControllerReadsTerminalInputOneByteAtATime(t *testing.T) {
 	controller := newInterruptController()
-	for _, character := range []byte("Hi\n") {
-		controller.QueueTerminalCharacter(character)
-	}
+	controller.QueueTerminalLine("Hi")
 
 	for _, want := range []uint8{'H', 'i', '\n'} {
 		if got := controller.In(0x4100); got != want {
@@ -91,8 +89,7 @@ func TestMode2HandlerCanReadTerminalInput(t *testing.T) {
 	}
 	mem.Write(handler, 0xDB) // IN A,(0)
 	mem.Write(handler+1, 0x00)
-	controller.QueueTerminalCharacter('K')
-	controller.QueueTerminalCharacter('\n')
+	controller.QueueTerminalLine("K")
 
 	cpu := z80.New(mem, controller)
 	cpu.IM = 2
@@ -119,13 +116,17 @@ func TestMode2HandlerCanReadTerminalInput(t *testing.T) {
 func TestTerminalInputDrivesInterruptUntilBufferDrained(t *testing.T) {
 	controller := newInterruptController()
 	cpu := z80.New(memory.NewRAM(), controller)
-	controller.QueueTerminalCharacter('A')
-	controller.QueueTerminalCharacter('\n')
 	active := false
 
 	updateTerminalInterrupt(cpu, controller, &active)
+	if cpu.INT || active {
+		t.Fatal("terminal input should not interrupt before Enter submits a line")
+	}
+
+	controller.QueueTerminalLine("A")
+	updateTerminalInterrupt(cpu, controller, &active)
 	if !cpu.INT || !active {
-		t.Fatal("queued input should assert the interrupt")
+		t.Fatal("submitted terminal line should assert the interrupt")
 	}
 	controller.In(uint16(terminalInputPort))
 	controller.In(uint16(terminalInputPort))

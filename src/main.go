@@ -155,10 +155,7 @@ func main() {
 		// 	// Command to Z80 real-time monitor. For now, just echo the command to the status window.
 		// 	appendStatus(status, fmt.Sprintf("Z80 Monitor Command: %s", inputLine))
 		default:
-			for _, character := range []byte(inputLine) {
-				terminalController.QueueTerminalCharacter(character) // Queue each character for the terminal input port
-			}
-			terminalController.QueueTerminalCharacter('\n') // Queue a newline character to simulate pressing Enter
+			terminalController.QueueTerminalLine(inputLine)
 		}
 		// Clear the input field after pressing Enter
 		terminalInput.SetText("")

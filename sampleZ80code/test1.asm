@@ -10,7 +10,7 @@ IHDLR_TERMINAL_VECTOR: EQU 0x00
 MONITOR_ROM:   EQU 0x0000
 INTERRUPT_VECTOR_TABLE: EQU 0X0200
 INTERRUPT_VECTOR_TABLE_MSB: EQU 0x02
-DEST:   EQU 0x4000  ; Destination address for data move tests
+TERMINAL_PORT   EQU 0x00
 
 ; 0x0000 - 0x01ff reserved for simulated ROM with System Monitor
 DEFS 512
@@ -40,67 +40,55 @@ WAIT:   NOP
         NOP
         JP WAIT
 
-; First, copy the DATA byte into 64 bytes beginning at Dest
-; After each copy, push the B register value onto the stack
-COPY:   LD  B,36 ; set loop counter to 36 characters
-        LD  HL,DEST ; load destination address
-        LD  A,(HASH) ; load A with value to copy
-
-COPY_LOOP:
-        LD  (HL),A ; store contents of A in address pointed to by IX + increment in D
-        INC HL
-        DJNZ COPY_LOOP ; decrement counter in B and loop
-
-        ; finished copy loop, now repeat forever for debugging interrupts
-        JP COPY ; repeat forever the main loop to allow for testing of interrupt handler
-
-        HALT   ; done - should never reach here. HALT as a precaution.
-
 ; Start Interrupt handler code
 IHDLR_TERMINAL:
         DI
         PUSH AF
         PUSH DE 
         LD DE, (INT_COUNT)     
-        IN A,(0)        ; get next available character from terminal port 0
         INC DE          ; increment interrupt count
         LD (INT_COUNT), DE
-        ; Append char to input buffer for monitor program use
-        OUT (0),A       ; write the character to port 0 (terminal display)
+        CALL PROCESS_LINE      ; Process the characters from the terminal
+        POP DE
         POP AF
         EI
         RETI
 
 ; Data area - CONSTANTS
-HASH:           DB "#"
-DATA:           DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
-NEWLINE:        DB 0x0A
-INT_COUNT:      DW 0x0000       ; var - stroes count of interrupts
+HASH:           EQU '#'
+NEWLINE:        EQU 0x0A
+RIGHT_ANGLE_BRACKET     EQU '>'
+INT_COUNT:      DW 0x0000       ; var - stores count of interrupts
 
-; Subroutines
-;
-; CHECK_MONITOR_CMD
-; Should this line be directed to the system monitor?
-; Tets character in A for '#'
-CHECK_MON_CMD:
-        PUSH AF ; Save status for return
-        CP 0x23 ; Is this a # sign?
-        JP Z, MON_CMD ; Send to Monitor Command Handler
-        POP AF
-        RET     ; Not monitor command, return to interrupt handler
+; Subroutine that retrieves and tests terminal lines
+PROCESS_LINE:
+        IN A,(TERMINAL_PORT)        ; get next available character from terminal port 0
+        ; Test for monitor command, if so, call monitor handler
+        ; otherwise just echo the character until NL
+        CP HASH         ; Is this a monitor command line?
+        JP Z, MON_CMD   ; Handle as monitor cmd
+        ; Not a monitor command, keep reading chars
+        ; If this was a NL, we are done, return from interrupt
+        CP NEWLINE
+        JP Z, END_TERMIO_IH
+        ; Not end of terminal line, keep reading chars
+        OUT (TERMINAL_PORT),A
+        JP FINISH_LINE
+
 MON_CMD:
         Call MONITOR_CMD_HNDLR   ; Handle monitor command
-        RET     ; Return to interrupt handler
-
+        JP END_TERMIO_IH     ; Return to interrupt handler
 ; MONITOR_CMD_HNDLR
 MONITOR_CMD_HNDLR:
         PUSH AF
-        LD A, '#'
-        OUT (0), A    ; Write a monitor line start symbol
- LOOP_READ_CMD:       OUT (0), A      ; Write the command letters
-        IN A, (0)       ; Get next char
-        OUT (0), A
-        CP A, 0x0A    ; If line feed, done
-        JP NZ, LOOP_READ_CMD           ; Not end, keep reading
+        LD A, RIGHT_ANGLE_BRACKET
+        OUT (TERMINAL_PORT), A    ; Write a monitor line start symbol
         POP AF
+FINISH_LINE:    ; process remaining chars from terminal     
+        IN A, (TERMINAL_PORT)       ; Get next char
+        OUT (TERMINAL_PORT), A
+        CP A, NEWLINE    ; If line feed, done
+        JP NZ, FINISH_LINE           ; Not end, keep reading
+END_TERMIO_IH:
+        OUT (TERMINAL_PORT), A ; output the NL and return
         RET

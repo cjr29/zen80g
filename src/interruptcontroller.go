@@ -74,10 +74,11 @@ func (c *interruptController) SetMode0Instruction(instruction []uint8) error {
 	return nil
 }
 
-// QueueTerminalCharacter queues one byte for the terminal input port.
-func (c *interruptController) QueueTerminalCharacter(character uint8) {
+// QueueTerminalLine queues a complete terminal line, including its line feed.
+func (c *interruptController) QueueTerminalLine(line string) {
+	input := append([]byte(line), '\n')
 	c.mu.Lock()
-	c.terminalInput = append(c.terminalInput, character)
+	c.terminalInput = append(c.terminalInput, input...)
 	c.mu.Unlock()
 }
 
