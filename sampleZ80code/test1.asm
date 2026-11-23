@@ -6,18 +6,19 @@
 ;
 ; Constants
 IHDLR_UNKNOWN: EQU 0x00
-IHDLR_TERMINAL_VECTOR: EQU 0x02
+IHDLR_TERMINAL_VECTOR: EQU 0x00
 MONITOR_ROM:   EQU 0x0000
 INTERRUPT_VECTOR_TABLE: EQU 0X0200
 INTERRUPT_VECTOR_TABLE_MSB: EQU 0x02
-DEST1:   EQU 0x4000  ; Destination address for data move tests
-DEST2:  EQU 0x5000      ; Destination for block move
+DEST:   EQU 0x4000  ; Destination address for data move tests
 
-; 0x0000 - 0x01ff reserved or simulated ROM with System Monitor
+; 0x0000 - 0x01ff reserved for simulated ROM with System Monitor
 DEFS 512
+; 0x0200 - 0x2ff reserved for interrupt vector table
 ; Interrupt Vector Table
-        DW IHDLR_UNKNOWN        ; vector 0
-        DW IHDLR_TERMINAL       ; vector 2 - interrupt on keyboard Enter pressed
+        ; First 3 words - 2 byte address per vector on even boundary
+        DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
+        DW IHDLR_UNKNOWN        ; vector 2
         DW IHDLR_UNKNOWN        ; vector 4
 ; Reserve remainder of block for IV table
 DEFS 256-6
@@ -25,50 +26,81 @@ DEFS 256-6
 ; Main code starts here
 MAIN:       ; Main program entry point 0x300
 
+        DI      ; Disable int during initialization
         LD A, INTERRUPT_VECTOR_TABLE_MSB
         LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
+        IM 2    ; Set interrupt mode to 2
         EI      ; Enable interrupts
+
+; For debugging interrupts, just enter a tight loop waiting for an IM2
+WAIT:   NOP
+        NOP
+        NOP
+        NOP
+        NOP
+        JP WAIT
 
 ; First, copy the DATA byte into 64 bytes beginning at Dest
 ; After each copy, push the B register value onto the stack
-        LD  B,64 ; set loop counter to 64
-        LD  C, 0
-        LD  IX,DEST1 ; load destination address minus 2 bytes to initialize address
-        LD  A,(DATA_HASH) ; load A with value to copy
+COPY:   LD  B,36 ; set loop counter to 36 characters
+        LD  HL,DEST ; load destination address
+        LD  A,(HASH) ; load A with value to copy
 
-LOOP:
-        LD  (IX),A ; store contents of A in address pointed to by IX + increment in D
-        INC IX
-        PUSH BC
-        DJNZ LOOP ; decrement counter in B and loop
+COPY_LOOP:
+        LD  (HL),A ; store contents of A in address pointed to by IX + increment in D
+        INC HL
+        DJNZ COPY_LOOP ; decrement counter in B and loop
 
-        JP MAIN ; repeat forever the main loop to allow for testing of interrupt handler
+        ; finished copy loop, now repeat forever for debugging interrupts
+        JP COPY ; repeat forever the main loop to allow for testing of interrupt handler
 
-        HALT   ; done - should never reach here
+        HALT   ; done - should never reach here. HALT as a precaution.
 
 ; Start Interrupt handler code
 IHDLR_TERMINAL:
         DI
         PUSH AF
-        ; do stuff, for now let us know you got here by placing a 0xff into D register
-        LD D, 0xff
-        CALL MOVEDATA   ; Run a subroutine within the handler
+        PUSH DE 
+        LD DE, (INT_COUNT)     
+        IN A,(0)        ; get next available character from terminal port 0
+        INC DE          ; increment interrupt count
+        LD (INT_COUNT), DE
+        ; Append char to input buffer for monitor program use
+        OUT (0),A       ; write the character to port 0 (terminal display)
         POP AF
         EI
         RETI
 
-; Start Move data block subroutine
-MOVEDATA:
-        ; Copy string from DATA to Destination
-        LD  HL, DATA + 2    ; Point to source (2 bytes beyond start of string)
-        LD  DE, DEST2 ; Point to destination
-        LD  BC, (DATA)      ; Get length of string (stored in first two bytes of data - little endian)
-        LDIR                ; Move BC bytes from (HL) to (DE)
-        RETI
+; Data area - CONSTANTS
+HASH:           DB "#"
+DATA:           DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
+NEWLINE:        DB 0x0A
+INT_COUNT:      DW 0x0000       ; var - stroes count of interrupts
 
+; Subroutines
+;
+; CHECK_MONITOR_CMD
+; Should this line be directed to the system monitor?
+; Tets character in A for '#'
+CHECK_MON_CMD:
+        PUSH AF ; Save status for return
+        CP 0x23 ; Is this a # sign?
+        JP Z, MON_CMD ; Send to Monitor Command Handler
+        POP AF
+        RET     ; Not monitor command, return to interrupt handler
+MON_CMD:
+        Call MONITOR_CMD_HNDLR   ; Handle monitor command
+        RET     ; Return to interrupt handler
 
-; Data area
-DATA_HASH:   DB "#"
-DATA:
-    DEFW 0x0035
-    DB "abcdefghijklmnopqrstuvwxyz0123456789", 0
+; MONITOR_CMD_HNDLR
+MONITOR_CMD_HNDLR:
+        PUSH AF
+        LD A, '#'
+        OUT (0), A    ; Write a monitor line start symbol
+ LOOP_READ_CMD:       OUT (0), A      ; Write the command letters
+        IN A, (0)       ; Get next char
+        OUT (0), A
+        CP A, 0x0A    ; If line feed, done
+        JP NZ, LOOP_READ_CMD           ; Not end, keep reading
+        POP AF
+        RET

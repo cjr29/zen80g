@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/ha1tch/zen80/z80"
 )
 
-func stepCPU(cpu *z80.Z80,
+func stepCPU(cpu *z80.Z80, controller *interruptController, output *terminalOutputWriter,
 	app *tview.Application,
 	status *tview.TextView,
 	processorMemory *tview.TextView, mem *memory.RAM,
@@ -20,7 +21,13 @@ func stepCPU(cpu *z80.Z80,
 	registers *tview.TextView, displayAddress, stackStartAddress uint16,
 	pcAddressInput *tview.InputField) {
 
+	terminalInterruptActive := false
+	updateTerminalInterrupt(cpu, controller, &terminalInterruptActive)
 	cycles := cpu.Step()
+	updateTerminalInterrupt(cpu, controller, &terminalInterruptActive)
+	if output.TakeScrollRequest() {
+		status.ScrollToEnd()
+	}
 	updatePCAddressInput(pcAddressInput, cpu.PC)
 	processorMemory.Clear()
 	registers.Clear()
@@ -30,23 +37,36 @@ func stepCPU(cpu *z80.Z80,
 	registerdump(registers, cpu)
 }
 
-func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
+func runCPU(cpu *z80.Z80, controller *interruptController, output *terminalOutputWriter, app *tview.Application, status *tview.TextView,
 	processorMemory *tview.TextView, mem *memory.RAM,
 	stack *tview.TextView,
 	registers *tview.TextView, displayAddress, stackStartAddress uint16,
 	buttons *tview.Form, running *atomic.Bool, pcAddressInput *tview.InputField) {
+
 	// cycles := 0
 	lastRefresh := time.Now()
-	for !cpu.Halted && running.Load() {
+	terminalInterruptActive := false
+	for running.Load() {
+		updateTerminalInterrupt(cpu, controller, &terminalInterruptActive)
+		if cpu.Halted && !cpu.INT {
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
 		//cycles = cycles + cpu.Step()
 		cpu.Step()
-		if time.Since(lastRefresh) >= 10000*time.Millisecond {
+		if output.TakeScrollRequest() {
+			app.QueueUpdateDraw(func() {
+				status.ScrollToEnd()
+			})
+		}
+		updateTerminalInterrupt(cpu, controller, &terminalInterruptActive)
+		if time.Since(lastRefresh) >= 5000*time.Millisecond {
 			app.QueueUpdateDraw(func() {
 				if !running.Load() {
 					return
 				}
 				// appendStatus(status, fmt.Sprintf("Running, cycles: %d", cycles))
-				appendStatus(status, fmt.Sprintf("Running ..."))
+				appendStatus(status, fmt.Sprintf("Running ... %v", time.Now().Format("15:04:05")))
 				processorMemory.Clear()
 				registers.Clear()
 				updatePCAddressInput(pcAddressInput, cpu.PC)
@@ -54,32 +74,66 @@ func runCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
 				refreshStackDump(stack, mem, cpu, stackStartAddress)
 				registerdump(registers, cpu)
 			})
-			if !running.Load() {
-				return
-			}
 			lastRefresh = time.Now()
 		}
 	}
-	if !running.Load() {
-		return
-	}
 
+	paused := !running.Load() && !cpu.Halted
 	app.QueueUpdateDraw(func() {
-		if !running.Load() {
-			return
-		}
 		processorMemory.Clear()
 		registers.Clear()
 		updatePCAddressInput(pcAddressInput, cpu.PC)
-		// appendStatus(status, fmt.Sprintf("Halted, cycles: %d", cycles))
-		appendStatus(status, fmt.Sprintf("Halted, PC: %04X", cpu.PC))
+		if paused {
+			appendStatus(status, fmt.Sprintf("Paused at PC %04X.", cpu.PC))
+		} else {
+			appendStatus(status, fmt.Sprintf("Halted, PC: %04X", cpu.PC))
+		}
 		refreshMemoryDump(processorMemory, mem)
 		refreshStackDump(stack, mem, cpu, stackStartAddress)
 		registerdump(registers, cpu)
 		setRunControlsEnabled(buttons, true)
 		running.Store(false)
-		app.SetFocus(buttons)
+		app.SetFocus(buttons.GetButton(stepButtonIndex))
 	})
+}
+
+func updateTerminalInterrupt(cpu *z80.Z80, controller *interruptController, active *bool) {
+	if controller.HasTerminalInput() {
+		*active = true
+		cpu.INT = true
+	} else if *active {
+		cpu.INT = false
+		*active = false
+	}
+}
+
+type terminalOutputWriter struct {
+	status                    *tview.TextView
+	mu                        sync.Mutex
+	previousWasCarriageReturn bool
+	scrollPending             atomic.Bool
+}
+
+func (w *terminalOutputWriter) WriteCharacter(character uint8) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	if character == '\n' && w.previousWasCarriageReturn {
+		w.previousWasCarriageReturn = false
+		return
+	}
+	w.previousWasCarriageReturn = character == '\r'
+
+	if character == '\r' || character == '\n' {
+		_, _ = w.status.Write([]byte{'\n'})
+	} else {
+		_, _ = w.status.Write([]byte{character})
+	}
+	w.scrollPending.Store(true)
+}
+
+func (w *terminalOutputWriter) TakeScrollRequest() bool {
+	return w.scrollPending.Swap(false)
 }
 
 func resetCPU(cpu *z80.Z80, app *tview.Application, status *tview.TextView,
@@ -151,12 +205,17 @@ func isHexAddressInput(text string) bool {
 }
 
 func setRunControlsEnabled(buttons *tview.Form, enabled bool) {
-	const exitButtonIndex = 3
 	for i := 0; i < buttons.GetButtonCount(); i++ {
-		if i != exitButtonIndex {
+		switch i {
+		case pauseButtonIndex:
+			buttons.GetButton(i).SetDisabled(enabled)
+		case exitButtonIndex:
+			buttons.GetButton(i).SetDisabled(false)
+		default:
 			buttons.GetButton(i).SetDisabled(!enabled)
 		}
 	}
+
 }
 
 func updatePCAddressInput(input *tview.InputField, pc uint16) {

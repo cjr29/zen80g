@@ -8,20 +8,25 @@ import (
 	"github.com/ha1tch/zen80/z80"
 )
 
+const terminalInputPort uint8 = 0x00
+const terminalOutputPort uint8 = 0x00
+
 var _ z80.InterruptController = (*interruptController)(nil)
 
 type interruptController struct {
 	*zenio.MappedIO
 
-	mu               sync.RWMutex
-	interruptVector  uint8
-	mode0Instruction []uint8
+	mu                    sync.RWMutex
+	interruptVector       uint8
+	mode0Instruction      []uint8
+	terminalInput         []byte
+	terminalOutputHandler func(uint8)
 }
 
 func newInterruptController() *interruptController {
 	return &interruptController{
 		MappedIO:         zenio.NewMappedIO(),
-		interruptVector:  0xFF,
+		interruptVector:  0x00,
 		mode0Instruction: []uint8{0xFF},
 	}
 }
@@ -67,4 +72,57 @@ func (c *interruptController) SetMode0Instruction(instruction []uint8) error {
 	c.mode0Instruction = append([]uint8(nil), instruction...)
 	c.mu.Unlock()
 	return nil
+}
+
+// QueueTerminalCharacter queues one byte for the terminal input port.
+func (c *interruptController) QueueTerminalCharacter(character uint8) {
+	c.mu.Lock()
+	c.terminalInput = append(c.terminalInput, character)
+	c.mu.Unlock()
+}
+
+// HasTerminalInput reports whether unread terminal characters remain.
+func (c *interruptController) HasTerminalInput() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return len(c.terminalInput) > 0
+}
+
+// In returns the next queued character when the terminal input port is read.
+func (c *interruptController) In(port uint16) uint8 {
+	if uint8(port) != terminalInputPort {
+		return c.MappedIO.In(port)
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.terminalInput) == 0 {
+		return 0
+	}
+	character := c.terminalInput[0]
+	c.terminalInput = c.terminalInput[1:]
+	return character
+}
+
+// SetTerminalOutputHandler sets the function called for each byte written to
+// the terminal output port.
+func (c *interruptController) SetTerminalOutputHandler(handler func(uint8)) {
+	c.mu.Lock()
+	c.terminalOutputHandler = handler
+	c.mu.Unlock()
+}
+
+// Out sends one byte written to the terminal output port to its handler.
+func (c *interruptController) Out(port uint16, value uint8) {
+	if uint8(port) != terminalOutputPort {
+		c.MappedIO.Out(port, value)
+		return
+	}
+
+	c.mu.RLock()
+	handler := c.terminalOutputHandler
+	c.mu.RUnlock()
+	if handler != nil {
+		handler(value)
+	}
 }

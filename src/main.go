@@ -19,8 +19,12 @@ const (
 	// The address of the interrupt service routine for the demo program.
 	interruptVectorTable = 0xEE00
 	// The interrupt vector for the demo program.
-	vector = 0x02
+	vector = 0x00
 	gray   = tcell.ColorGray
+
+	stepButtonIndex  = 0
+	pauseButtonIndex = 2
+	exitButtonIndex  = 4
 )
 
 var buttons *tview.Form
@@ -98,15 +102,17 @@ func main() {
 	status := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetScrollable(true)
-	status.SetBorder(true).SetTitle("Simulator Status")
+	status.SetBorder(true).SetTitle("Terminal Output")
 	status.SetBackgroundColor(gray)
+	terminalOutput := &terminalOutputWriter{status: status}
+	terminalController.SetTerminalOutputHandler(terminalOutput.WriteCharacter)
 	if startupStatus != "" {
 		appendStatus(status, startupStatus)
 	}
 
 	terminalInput := tview.NewInputField().
 		SetLabel("$> ").
-		SetPlaceholder("Type text and press Enter")
+		SetPlaceholder("Enter commands or text for the terminal. Type #reset, #step, #run, or !int for special commands.")
 	terminalInput.SetLabelStyle(
 		terminalInput.GetLabelStyle().Background(gray),
 	)
@@ -120,28 +126,39 @@ func main() {
 		if key != tcell.KeyEnter {
 			return
 		}
-		appendStatus(status, terminalInput.GetText()) // Echo input to status window
+		inputLine := terminalInput.GetText()
+		// appendStatus(status, inputLine) // Echo input to status window
 		// Check for special commands
-		command := strings.TrimSpace(terminalInput.GetText())
+		command := strings.TrimSpace(inputLine)
 		switch command {
-		case "#reset":
+		case "!!reset":
 			resetCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
-		case "#step":
-			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
-		case "#run":
+		case "!!step":
+			stepCPU(cpu, terminalController, terminalOutput, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
+		case "!!run":
 			if !running.CompareAndSwap(false, true) {
 				appendStatus(status, "CPU is already running.")
 				return
 			}
 			appendStatus(status, fmt.Sprintf("Running from address %04X.", cpu.PC))
 			setRunControlsEnabled(buttons, false)
-			app.SetFocus(buttons.GetButton(3))
-			go runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
-		case "!int":
+			app.SetFocus(buttons.GetButton(pauseButtonIndex))
+			go runCPU(cpu, terminalController, terminalOutput, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
+		case "!!exit":
+			running.Store(false)
+			app.Stop()
+		case "!!int":
 			// Trigger the terminal's interrupt handler
-			cpu.INT = true
+			//cpu.INT = true
+			appendStatus(status, fmt.Sprintf("Triggering interrupt at vector %02X.", vector))
+		// case "#":
+		// 	// Command to Z80 real-time monitor. For now, just echo the command to the status window.
+		// 	appendStatus(status, fmt.Sprintf("Z80 Monitor Command: %s", inputLine))
 		default:
-			appendStatus(status, fmt.Sprintf("Unknown command: %q", command))
+			for _, character := range []byte(inputLine) {
+				terminalController.QueueTerminalCharacter(character) // Queue each character for the terminal input port
+			}
+			terminalController.QueueTerminalCharacter('\n') // Queue a newline character to simulate pressing Enter
 		}
 		// Clear the input field after pressing Enter
 		terminalInput.SetText("")
@@ -436,7 +453,7 @@ func main() {
 			if running.Load() {
 				return
 			}
-			stepCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
+			stepCPU(cpu, terminalController, terminalOutput, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, pcAddressInput)
 		}).
 		AddButton("[green]Run", func() {
 			if !running.CompareAndSwap(false, true) {
@@ -444,8 +461,13 @@ func main() {
 			}
 			appendStatus(status, fmt.Sprintf("Running from address %04X.", cpu.PC))
 			setRunControlsEnabled(buttons, false)
-			app.SetFocus(buttons.GetButton(3))
-			go runCPU(cpu, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
+			app.SetFocus(buttons.GetButton(pauseButtonIndex))
+			go runCPU(cpu, terminalController, terminalOutput, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
+		}).
+		AddButton("[yellow]Pause", func() {
+			if !running.CompareAndSwap(true, false) {
+				return
+			}
 		}).
 		AddButton("[yellow]Reset", func() {
 			if running.Load() {
@@ -477,25 +499,33 @@ func main() {
 	// and the third row is for the terminal input field. The first column is for the processor
 	// memory text view, the second column is for the registers text view, and the third column
 	// is for the stack text view.
+	contentGrid := tview.NewGrid().
+		SetRows(0).
+		SetColumns(75, 32, -4).
+		SetBorders(true).
+		SetMinSize(15, 0)
+
+	// Layout for screens narrower than 100 cells (processorMemory and stack are hidden).
+	contentGrid.AddItem(processorMemory, 0, 0, 0, 0, 0, 0, false).
+		AddItem(registers, 0, 0, 1, 3, 0, 0, false).
+		AddItem(stack, 0, 0, 0, 0, 0, 0, false)
+
+	// Layout for screens wide enough to show all three panes.
+	contentGrid.AddItem(processorMemory, 0, 0, 1, 1, 0, 100, true).
+		AddItem(registers, 0, 1, 1, 1, 0, 100, false).
+		AddItem(stack, 0, 2, 1, 1, 0, 100, true)
+
 	grid := tview.NewGrid().
 		SetRows(7, 0, 10, 5).
 		SetColumns(75, 32, -4).
 		SetBorders(true).
 		AddItem(buttons, 0, 0, 1, 3, 0, 0, true).
+		AddItem(contentGrid, 1, 0, 1, 3, 0, 0, false).
 		AddItem(status, 2, 0, 1, 3, 0, 0, false).
 		AddItem(terminalInput, 3, 0, 1, 3, 0, 0, true)
 
 	grid.SetBackgroundColor(gray)
-
-	// Layout for screens narrower than 100 cells (processorMemory and stack are hidden).
-	grid.AddItem(processorMemory, 0, 0, 0, 0, 0, 0, false).
-		AddItem(registers, 1, 0, 1, 3, 0, 0, false).
-		AddItem(stack, 0, 0, 0, 0, 0, 0, false)
-
-	// Layout for screens wider than 100 cells.
-	grid.AddItem(processorMemory, 1, 0, 1, 1, 0, 100, true).
-		AddItem(registers, 1, 1, 1, 1, 0, 100, false).
-		AddItem(stack, 1, 2, 1, 1, 0, 100, true)
+	contentGrid.SetBackgroundColor(gray)
 
 	pages.AddPage("main", grid, true, true).
 		AddPage("loadProgram", loadProgramForm, true, false)
