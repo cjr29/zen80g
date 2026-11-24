@@ -9,6 +9,8 @@ zen80g is a terminal-based GUI implementation of the zen80 Z80 microprocessor si
 
 **Z80 Assembler and Tools [z88dk](https://github.com/z88dk/z88dk)
 
+<img src="images/blockdiagram.png" alt="zen80g System Diagram" width="700">
+
 # Project Summary
 zen80g is a front-end to a Z80 8-bit mircorprocessor simulator. I'm using an excellent z80 simulator called zen80 written by [ha1tch](https://github.com/ha1tch/zen80.git), [website](https://ha1tch.github.io/zsp/projects/zen80/index.html).
 
