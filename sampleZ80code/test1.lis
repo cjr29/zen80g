@@ -1,20 +1,26 @@
 test1.asm:
      1                          ; test1
-     2                          ; Copies a "#" character 64 times into memory
-     3                          ; As it copies into memory, it also pushes onto the stack
-     4                          ; Result will be 64 bytes of "#" and 64 words on the stack
-     5                          ; since the stack operates on words
-     6                          ;
-     7                          ; Constants
-     8                          IHDLR_UNKNOWN: EQU 0x00
-     9                          IHDLR_TERMINAL_VECTOR: EQU 0x00
-    10                          MONITOR_ROM:   EQU 0x0000
-    11                          INTERRUPT_VECTOR_TABLE: EQU 0X0200
-    12                          INTERRUPT_VECTOR_TABLE_MSB: EQU 0x02
-    13                          TERMINAL_PORT   EQU 0x00
-    14                          
-    15                          ; 0x0000 - 0x01ff reserved for simulated ROM with System Monitor
-    16  0000  0000000000000000  DEFS 512
+     2                          ;
+     3                          ;
+     4                          ; Constants
+     5                          IHDLR_UNKNOWN:                  EQU 0x00
+     6                          IHDLR_TERMINAL_VECTOR:          EQU 0x00
+     7                          MONITOR_ROM:                    EQU 0x0000
+     8                          INTERRUPT_VECTOR_TABLE:         EQU 0X0100
+     9                          INTERRUPT_VECTOR_TABLE_MSB:     EQU 0x01
+    10                          TERMINAL_PORT                   EQU 0x00
+    11                          NULL:                           EQU 0x00
+    12                          HASH:                           EQU '#'
+    13                          NEWLINE:                        EQU 0x0A
+    14                          RIGHT_ANGLE_BRACKET             EQU '>'
+    15                          SPACE:                          EQU ' '
+    16                          
+    17                          ;****************************************************
+    18                          ;********************** ENTRY ***********************
+    19                          ;****************************************************
+    20  0000  c30102                    JP MAIN
+    21                          ; Skip space to IVT
+    22  0003  0000000000000000  DEFS 256-3
               0000000000000000  
               0000000000000000  
               0000000000000000  
@@ -45,47 +51,18 @@ test1.asm:
               0000000000000000  
               0000000000000000  
               0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-              0000000000000000  
-    17                          ; 0x0200 - 0x2ff reserved for interrupt vector table
-    18                          ; Interrupt Vector Table
-    19                                  ; First 3 words - 2 byte address per vector on even boundary
-    20  0200  1003                      DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
-    21  0202  0000                      DW IHDLR_UNKNOWN        ; vector 2
-    22  0204  0000                      DW IHDLR_UNKNOWN        ; vector 4
-    23                          ; Reserve remainder of block for IV table
-    24  0206  0000000000000000  DEFS 256-6
+              0000000000        
+    23                          
+    24                          ;****************************************************
+    25                          ;************** INTERRUPT VECTOR TABLE **************
+    26                          ; 0x0100 - 0x01ff reserved for interrupt vector table
+    27                          ; Interrupt Vector Table
+    28                          ; First 3 words - 2 byte address per vector on even boundary
+    29  0100  1c02              DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
+    30  0102  0000              DW IHDLR_UNKNOWN        ; vector 2
+    31  0104  0000              DW IHDLR_UNKNOWN        ; vector 4
+    32                          ; Reserve remainder of block for IV table
+    33  0106  0000000000000000  DEFS 256-6
               0000000000000000  
               0000000000000000  
               0000000000000000  
@@ -117,74 +94,153 @@ test1.asm:
               0000000000000000  
               0000000000000000  
               0000              
-    25                          
-    26                          ; Main code starts here
-    27                          MAIN:       ; Main program entry point 0x300
-    28                          
-    29  0300  f3                        DI      ; Disable int during initialization
-    30  0301  3e02                      LD A, INTERRUPT_VECTOR_TABLE_MSB
-    31  0303  ed47                      LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
-    32  0305  ed5e                      IM 2    ; Set interrupt mode to 2
-    33  0307  fb                        EI      ; Enable interrupts
     34                          
-    35                          ; For debugging interrupts, just enter a tight loop waiting for an IM2
-    36  0308  00                WAIT:   NOP
-    37  0309  00                        NOP
-    38  030a  00                        NOP
-    39  030b  00                        NOP
-    40  030c  00                        NOP
-    41  030d  c30803                    JP WAIT
-    42                          
-    43                          ; Start Interrupt handler code
-    44                          IHDLR_TERMINAL:
-    45  0310  f3                        DI
-    46  0311  f5                        PUSH AF
-    47  0312  d5                        PUSH DE
-    48  0313  ed5b2403                  LD DE, (INT_COUNT)
-    49  0317  13                        INC DE          ; increment interrupt count
-    50  0318  ed532403                  LD (INT_COUNT), DE
-    51  031c  cd2603                    CALL PROCESS_LINE      ; Process the characters from the terminal
-    52  031f  d1                        POP DE
-    53  0320  f1                        POP AF
-    54  0321  fb                        EI
-    55  0322  ed4d                      RETI
-    56                          
-    57                          ; Data area - CONSTANTS
-    58                          HASH:           EQU '#'
-    59                          NEWLINE:        EQU 0x0A
-    60                          RIGHT_ANGLE_BRACKET     EQU '>'
-    61  0324  0000              INT_COUNT:      DW 0x0000       ; var - stores count of interrupts
-    62                          
-    63                          ; Subroutine that retrieves and tests terminal lines
-    64                          PROCESS_LINE:
-    65  0326  db00                      IN A,(TERMINAL_PORT)        ; get next available character from terminal port 0
-    66                                  ; Test for monitor command, if so, call monitor handler
-    67                                  ; otherwise just echo the character until NL
-    68  0328  fe23                      CP HASH         ; Is this a monitor command line?
-    69  032a  ca3703                    JP Z, MON_CMD   ; Handle as monitor cmd
-    70                                  ; Not a monitor command, keep reading chars
-    71                                  ; If this was a NL, we are done, return from interrupt
-    72  032d  fe0a                      CP NEWLINE
-    73  032f  ca4c03                    JP Z, END_TERMIO_IH
-    74                                  ; Not end of terminal line, keep reading chars
-    75  0332  d300                      OUT (TERMINAL_PORT),A
-    76  0334  c34303                    JP FINISH_LINE
-    77                          
-    78                          MON_CMD:
-    79  0337  cd3d03                    Call MONITOR_CMD_HNDLR   ; Handle monitor command
-    80  033a  c34c03                    JP END_TERMIO_IH     ; Return to interrupt handler
-    81                          ; MONITOR_CMD_HNDLR
-    82                          MONITOR_CMD_HNDLR:
-    83  033d  f5                        PUSH AF
-    84  033e  3e3e                      LD A, RIGHT_ANGLE_BRACKET
-    85  0340  d300                      OUT (TERMINAL_PORT), A    ; Write a monitor line start symbol
-    86  0342  f1                        POP AF
-    87                          FINISH_LINE:    ; process remaining chars from terminal
-    88  0343  db00                      IN A, (TERMINAL_PORT)       ; Get next char
-    89  0345  d300                      OUT (TERMINAL_PORT), A
-    90  0347  fe0a                      CP A, NEWLINE    ; If line feed, done
-    91  0349  c24303                    JP NZ, FINISH_LINE           ; Not end, keep reading
-    92                          END_TERMIO_IH:
-    93  034c  d300                      OUT (TERMINAL_PORT), A ; output the NL and return
-    94  034e  c9                        RET
-    95                          
+    35                          ;****************************************************
+    36                          ;*************** SYSTEM MONITOR *********************
+    37                          ;****************************************************
+    38                          ; Monitor code starts here
+    39  0200  00                INPUTFLAG: DB 0 ; 0: no input, non-zero: input
+    40                          
+    41                          MAIN:
+    42                                  ; Iniitialize monitor
+    43  0201  f3                        DI      ; Disable int during initialization
+    44  0202  3e01                      LD A, INTERRUPT_VECTOR_TABLE_MSB
+    45  0204  ed47                      LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
+    46  0206  ed5e                      IM 2    ; Set interrupt mode to 2
+    47  0208  fb                        EI      ; Enable interrupts
+    48                          
+    49                          ; Main monitor loop, just enter a loop waiting for a caommand
+    50                          WAIT:
+    51                                  ; Watch for input commands, Disable interrupts while testing flag
+    52                                  ; to avoid race condition where interrupt routine sets the flag after
+    53                                  ; it is checked but before the main loop clears it causing
+    54                                  ; notifications to be lost
+    55  0209  00                        NOP
+    56  020a  00                        NOP
+    57  020b  00                        NOP
+    58  020c  00                        NOP
+    59  020d  3a0002                    LD A, (INPUTFLAG)
+    60  0210  b7                        OR A                   ; Z=1 if INPUTFLAG is zero
+    61  0211  c4a702                    CALL NZ, PROCESS_LINE
+    62  0214  3e00                      LD A, 0
+    63  0216  320002                    LD (INPUTFLAG), A       ; Clear terminal data flag
+    64  0219  c30902                    JP WAIT                 ; Keep waiting
+    65                          
+    66                          ;***********************************************************
+    67                          ;****** Interrupt Handler **********************************
+    68                          ;*** for TERMINAL_PORT
+    69                          ;***********************************************************
+    70                          ; Start Interrupt handler code
+    71                          IHDLR_TERMINAL:
+    72  021c  f3                        DI
+    73  021d  f5                        PUSH AF
+    74  021e  cd7602                    CALL READ_LINE      ; Read the characters from the terminal
+    75  0221  f1                        POP AF
+    76  0222  fb                        EI
+    77  0223  ed4d                      RETI
+    78                          
+    79                          ;***********************************************************
+    80                          ;******** Subroutine: READ_LINE ***************************
+    81                          ;*** Reads chars from terminal buffer into INBUFFER
+    82                          ;*** Terminates string with NULL
+    83                          ;*** Max line size is 80 chars
+    84                          ;***********************************************************
+    85                          INBUFFER_SIZE EQU 80
+    86  0225  0000000000000000  INBUFFER: DEFS 81         ; 80 chars plus null for terminal input
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              00                
+    87                          
+    88                          READ_LINE:
+    89  0276  f5                        PUSH AF
+    90  0277  dde5                      PUSH IX
+    91  0279  c5                        PUSH BC
+    92  027a  dd212502                  LD IX, INBUFFER
+    93  027e  0600                      LD   B,0
+    94                          
+    95                          read_char:
+    96  0280  db00                      IN   A,(TERMINAL_PORT)
+    97  0282  fe0a                      CP   NEWLINE         ; LF?
+    98  0284  280d                      JR   Z,got_lf        ; Don't store the LF
+    99                          
+   100  0286  dd7700                    LD   (IX+0),A        ; Store character
+   101  0289  dd23                      INC  IX              ; Advance write pointer
+   102  028b  04                        INC  B               ; Increase character count
+   103                          
+   104  028c  78                        LD   A,B
+   105  028d  fe50                      CP   INBUFFER_SIZE
+   106  028f  2808                      JR   Z,buffer_full
+   107  0291  18ed                      JR   read_char
+   108                          
+   109                          got_lf:
+   110  0293  dd360000                  LD   (IX+0),NULL     ; Terminate string with null
+   111  0297  1804                      JR   done_read_line
+   112                          
+   113                          buffer_full:
+   114  0299  dd36ff00                  LD   (IX-1),NULL     ; buffer full, terminate with null anyway
+   115                          
+   116                          done_read_line:
+   117  029d  3e01                      LD A, 0x01
+   118  029f  320002                    LD (INPUTFLAG), A      ; Set flag we have data
+   119  02a2  c1                        POP BC
+   120  02a3  dde1                      POP IX
+   121  02a5  f1                        POP AF
+   122  02a6  c9                        RET                  ; INBUFFER contains string terminated by NULL
+   123                          
+   124                          ;**********************************************************
+   125                          ;****** Subroutine: PROCESS_LINE **************************
+   126                          ;* Retrieves and tests terminal lines *********************
+   127                          ;* If prefixed by '#', treats as Command
+   128                          ;* Else, just echos the line to the terminal
+   129                          ;**********************************************************
+   130                          PROCESS_LINE:
+   131                                  ; Test for monitor command, if so, call monitor handler
+   132                                  ; otherwise no need to do anything
+   133  02a7  f5                        PUSH AF
+   134  02a8  dde5                      PUSH IX
+   135  02aa  c5                        PUSH BC
+   136  02ab  dd212502                  LD IX, INBUFFER
+   137  02af  dd7e00                    LD A, (IX+0) ; Get first character from input buffer
+   138                                  ; Check for command (TBD)
+   139                          
+   140                          PROCESS_LINE_DONE:
+   141  02b2  cdba02                    CALL PRINT_LINE
+   142  02b5  c1                        POP BC
+   143  02b6  dde1                      POP IX
+   144  02b8  f1                        POP AF
+   145  02b9  c9                        RET
+   146                          
+   147                          
+   148                          ;***********************************************************
+   149                          ;******** Subroutine: PRINT_LINE ***************************
+   150                          ;*** IX: Input - points to buffer
+   151                          ;*** IY: points to outbut buffer
+   152                          ;*** Processes input string until NULL char
+   153                          ;*** Writes to TERMINAL_OUT and ends line with NL char
+   154                          ;***********************************************************
+   155                          PRINT_LINE:
+   156  02ba  f5                        PUSH AF
+   157  02bb  dde5                      PUSH IX
+   158  02bd  dd212502                  LD IX, INBUFFER
+   159                          L_PRINT_LINE:
+   160  02c1  dd7e00                    LD A, (IX+0)
+   161  02c4  fe00                      CP NULL         ; End of string?
+   162  02c6  cacf02                    JP Z, DONE_PRINT_LINE
+   163  02c9  d300                      OUT (TERMINAL_PORT), A
+   164  02cb  dd23                      INC IX
+   165  02cd  18f2                      JR L_PRINT_LINE         ; Loop
+   166                          DONE_PRINT_LINE:                ; Finish by writing a NL to terminal
+   167  02cf  3e0a                      LD A, NEWLINE
+   168  02d1  d300                      OUT (TERMINAL_PORT), A
+   169  02d3  dde1                      POP IX
+   170  02d5  f1                        POP AF
+   171  02d6  c9                        RET
+   172                          
+   173                          
