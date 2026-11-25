@@ -87,7 +87,8 @@ func main() {
 
 	registers := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
-		SetDynamicColors(true)
+		SetDynamicColors(true).
+		SetScrollable(false)
 	registers.SetBorder(true).SetTitle("Registers")
 	registers.SetBackgroundColor(gray)
 
@@ -144,6 +145,11 @@ func main() {
 			setRunControlsEnabled(buttons, false)
 			app.SetFocus(buttons.GetButton(pauseButtonIndex))
 			go runCPU(cpu, terminalController, terminalOutput, app, status, processorMemory, mem, stack, registers, displayAddress, stackStartAddress, buttons, &running, pcAddressInput)
+		case "!!pause":
+			if !running.CompareAndSwap(true, false) {
+				appendStatus(status, "CPU is not running.")
+				return
+			}
 		case "!!exit":
 			running.Store(false)
 			app.Stop()
@@ -484,8 +490,8 @@ func main() {
 		}).
 		SetButtonActivatedStyle(
 			tcell.StyleDefault.
-				Foreground(tcell.ColorBlack).
-				Background(tcell.ColorYellow),
+				Foreground(tcell.ColorWhite).
+				Background(tcell.ColorBlack),
 		)
 	buttons.SetFocus(0)
 	buttons.SetBackgroundColor(gray)

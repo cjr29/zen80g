@@ -3,8 +3,6 @@ zen80g is a terminal-based GUI implementation of the zen80 Z80 microprocessor si
 ## Credits
 **zen80 emulator by [ha1tch](https://github.com/ha1tch/zen80)
 
-**Z80 ROM Monitor code based on projects by [a] and [b]
-
 **Terminal UI [tview](github.com/rivo/tview) open source code
 
 **Z80 Assembler and Tools [z88dk](https://github.com/z88dk/z88dk)
@@ -25,6 +23,8 @@ Use the **Load at** field on the main screen to view or change the address for f
 
 ### Terminal Input to Z80 Programs
 
+There are two ways I could have gone with the terminal. One would be to simulate the Z80 implementing its own terminal handler where it constantly polls the terminal port for the next character and then takes action. The second is to assume that we have an existing terminal device that supplies lines of text terminated by a newline (0x0A) character and an interrupt to notify the processer it has input. The first way would be fun, but not real interesting. The second way gets the entire terminal out of the way and lets us write other code that does moe complex things while exercising the interrupt handling of the simulator. I chose the second methof, so that the keyboard entry can send commands to either the simulator (zen80g) or to the Z80 itself. Start a line with a '!!' bang-bang will send it all subsequent characters to the zen80g simulator for meta actions. Starting with a '#' hash character will send it and subsequent characters to the Z80 interrupt handler with a Mode 2 maskable interrupt. It is up to the Z80 to handle the parsing and actions commanded by the line. If neither lead character is provided, the line is just sent to the Z80 with an interrupt and it can do what it wants -- use it as input data, etc.
+
 Enter ordinary text in the **Terminal Input** field and press Enter to submit the complete line. The submitted line can be either a Directive to the zen80 simulator or a Command to the simulated Z80 processor (typically a small  ROM monitor program always running waiting for interrupts). The input device raises a maskable interrupt only after Enter submits the line. The Z80 program running in the simulator reads a line of characters when it receives a Mode 2 interrupt from I/O port `00` using `IN A,(0)`. Each submitted line, including an empty line, ends with line feed (`0x0A`). The Z80 interrupt handler should write (echo) the byte in A to the Terminal Output with `OUT (0),A`. Directives such as `!!run`, `!!step`, `!!reset`, and `!exit` remain simulator commands and are not queued as text to the Z80. Therefore, simulator Directives do not generate an interrupt and are not seen by the Z80. Lines beginning with '#' are passed through to the Z80 code and should be handled as Commands to a simulated monitor in the Z80. All other keystrokes are passed on to the Z80 interrupt handler when Enter is pressed. A terminal input string passed to the Z80 always ends in a newline (0x0A), so it can be used to check for end of input by the interrupt handler. A sample z80 program with interrupt handler is provided in this distribution named **test1.asm**.
 
 Since this is a GUI-based project, the main() function will be the user presentation with a grid-style layout on the terminal so it can be run without having a desktop environment. Button widgets on the GUI will support Single-Step, Run, and other zen80 functions. A section of the grid display will provide hex and ASCII inspection of the Z80 memory. Z80 register content will be updated in real-time. Memory, Register, and Stack panes are updated every 100 milliseconds. I'm adding the ability to load assembled object code from a file directly into the Z80 memory at a specified address. I will attempt to keep this project linked to the z80 project to take advantage of any updates it provides.
@@ -42,9 +42,9 @@ Z80 assembly code is cross-compiled using the open source tool [z88dk](https://g
 <img src="images/screen2.png" alt="zen80g Terminal Screen" width="700">
 
 # Assembling sample programs
-`z88dk-z80asm -l -b -o=movedatablock.o movedatablock.asm`
+`z88dk-z80asm -l -b -o=test1.o test1.asm`
 
-The -b option tells assembler to generate plain binary output without any system headers used by specific simulators.
+The -b option tells the assembler to generate plain binary output without any system headers used by specific simulators.
 
 # Running sample programs
-`zen80g -program movedatablock.o`
+`zen80g -program test1.o`
