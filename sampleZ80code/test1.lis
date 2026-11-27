@@ -14,13 +14,15 @@ test1.asm:
     13                          NEWLINE:                        EQU 0x0A
     14                          RIGHT_ANGLE_BRACKET             EQU '>'
     15                          SPACE:                          EQU ' '
-    16                          
-    17                          ;****************************************************
-    18                          ;********************** ENTRY ***********************
+    16                          INBUFFER_SIZE                   EQU 80
+    17                          IQSIZE                          EQU 10  ; input queue size, 10 words
+    18                          
     19                          ;****************************************************
-    20  0000  c30102                    JP MAIN
-    21                          ; Skip space to IVT
-    22  0003  0000000000000000  DEFS 256-3
+    20                          ;********************** ENTRY ***********************
+    21                          ;****************************************************
+    22  0000  c30102                    JP MAIN
+    23                          ; Skip space to IVT
+    24  0003  0000000000000000  DEFS 256-3
               0000000000000000  
               0000000000000000  
               0000000000000000  
@@ -52,17 +54,17 @@ test1.asm:
               0000000000000000  
               0000000000000000  
               0000000000        
-    23                          
-    24                          ;****************************************************
-    25                          ;************** INTERRUPT VECTOR TABLE **************
-    26                          ; 0x0100 - 0x01ff reserved for interrupt vector table
-    27                          ; Interrupt Vector Table
-    28                          ; First 3 words - 2 byte address per vector on even boundary
-    29  0100  1c02              DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
-    30  0102  0000              DW IHDLR_UNKNOWN        ; vector 2
-    31  0104  0000              DW IHDLR_UNKNOWN        ; vector 4
-    32                          ; Reserve remainder of block for IV table
-    33  0106  0000000000000000  DEFS 256-6
+    25                          
+    26                          ;****************************************************
+    27                          ;************** INTERRUPT VECTOR TABLE **************
+    28                          ; 0x0100 - 0x01ff reserved for interrupt vector table
+    29                          ; Interrupt Vector Table
+    30                          ; First 3 words - 2 byte address per vector on even boundary
+    31  0100  1902              DW IHDLR_TERMINAL       ; vector 0 - interrupt on keyboard Enter pressed
+    32  0102  0000              DW IHDLR_UNKNOWN        ; vector 2
+    33  0104  0000              DW IHDLR_UNKNOWN        ; vector 4
+    34                          ; Reserve remainder of block for IV table
+    35  0106  0000000000000000  DEFS 256-6
               0000000000000000  
               0000000000000000  
               0000000000000000  
@@ -94,59 +96,59 @@ test1.asm:
               0000000000000000  
               0000000000000000  
               0000              
-    34                          
-    35                          ;****************************************************
-    36                          ;*************** SYSTEM MONITOR *********************
+    36                          
     37                          ;****************************************************
-    38                          ; Monitor code starts here
-    39  0200  00                INPUTFLAG: DB 0 ; 0: no input, non-zero: input
-    40                          
-    41                          MAIN:
-    42                                  ; Iniitialize monitor
-    43  0201  f3                        DI      ; Disable int during initialization
-    44  0202  3e01                      LD A, INTERRUPT_VECTOR_TABLE_MSB
-    45  0204  ed47                      LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
-    46  0206  ed5e                      IM 2    ; Set interrupt mode to 2
-    47  0208  fb                        EI      ; Enable interrupts
-    48                          
-    49                          ; Main monitor loop, just enter a loop waiting for a caommand
-    50                          WAIT:
-    51                                  ; Watch for input commands, Disable interrupts while testing flag
-    52                                  ; to avoid race condition where interrupt routine sets the flag after
-    53                                  ; it is checked but before the main loop clears it causing
-    54                                  ; notifications to be lost
-    55  0209  00                        NOP
-    56  020a  00                        NOP
-    57  020b  00                        NOP
-    58  020c  00                        NOP
-    59  020d  3a0002                    LD A, (INPUTFLAG)
-    60  0210  b7                        OR A                   ; Z=1 if INPUTFLAG is zero
-    61  0211  c4a702                    CALL NZ, PROCESS_LINE
-    62  0214  3e00                      LD A, 0
-    63  0216  320002                    LD (INPUTFLAG), A       ; Clear terminal data flag
-    64  0219  c30902                    JP WAIT                 ; Keep waiting
-    65                          
-    66                          ;***********************************************************
-    67                          ;****** Interrupt Handler **********************************
-    68                          ;*** for TERMINAL_PORT
-    69                          ;***********************************************************
-    70                          ; Start Interrupt handler code
-    71                          IHDLR_TERMINAL:
-    72  021c  f3                        DI
-    73  021d  f5                        PUSH AF
-    74  021e  cd7602                    CALL READ_LINE      ; Read the characters from the terminal
-    75  0221  f1                        POP AF
-    76  0222  fb                        EI
-    77  0223  ed4d                      RETI
-    78                          
-    79                          ;***********************************************************
-    80                          ;******** Subroutine: READ_LINE ***************************
-    81                          ;*** Reads chars from terminal buffer into INBUFFER
-    82                          ;*** Terminates string with NULL
-    83                          ;*** Max line size is 80 chars
-    84                          ;***********************************************************
-    85                          INBUFFER_SIZE EQU 80
-    86  0225  0000000000000000  INBUFFER: DEFS 81         ; 80 chars plus null for terminal input
+    38                          ;*************** SYSTEM MONITOR *********************
+    39                          ;****************************************************
+    40                          ; Monitor code starts here
+    41  0200  00                INPUTFLAG: DB 0 ; 0: no input, non-zero: input
+    42                          
+    43                          MAIN:
+    44                                  ; Iniitialize monitor
+    45  0201  f3                        DI      ; Disable int during initialization
+    46  0202  3e01                      LD A, INTERRUPT_VECTOR_TABLE_MSB
+    47  0204  ed47                      LD I, A ; Set Interrupt Vector to MSB of the Interrupt Vector Table address
+    48  0206  ed5e                      IM 2    ; Set interrupt mode to 2
+    49  0208  fb                        EI      ; Enable interrupts
+    50                          
+    51                          ; Main monitor loop, just enter a loop waiting for a caommand
+    52                          WAIT:
+    53                                  ; Watch for input commands, Disable interrupts while testing flag
+    54                                  ; to avoid race condition where interrupt routine sets the flag after
+    55                                  ; it is checked but before the main loop clears it causing
+    56                                  ; notifications to be lost
+    57  0209  00                        NOP
+    58  020a  00                        NOP
+    59  020b  00                        NOP
+    60  020c  00                        NOP
+    61  020d  3a0002                    LD A, (INPUTFLAG)
+    62  0210  b7                        OR A                   ; Z=1 if INPUTFLAG is zero
+    63                                  ;CALL NZ, PROCESS_LINE ; TBD - Need input queue before enabling
+    64  0211  3e00                      LD A, 0
+    65  0213  320002                    LD (INPUTFLAG), A       ; Clear terminal data flag
+    66  0216  c30902                    JP WAIT                 ; Keep waiting
+    67                          
+    68                          ;***********************************************************
+    69                          ;****** Interrupt Handler **********************************
+    70                          ;*** for TERMINAL_PORT
+    71                          ;***********************************************************
+    72                          ; Start Interrupt handler code
+    73                          IHDLR_TERMINAL:
+    74  0219  f3                        DI
+    75  021a  f5                        PUSH AF
+    76  021b  cd7602                    CALL READ_LINE      ; Read the characters from the terminal
+    77  021e  cdba02                    CALL PRINT_LINE     ; Echo the line to the terminal
+    78  0221  f1                        POP AF
+    79  0222  fb                        EI
+    80  0223  ed4d                      RETI
+    81                          
+    82                          ;***********************************************************
+    83                          ;******** Subroutine: READ_LINE ***************************
+    84                          ;*** Reads chars from terminal buffer into INBUFFER
+    85                          ;*** Terminates string with NULL
+    86                          ;*** Max line size is 80 chars
+    87                          ;***********************************************************
+    88  0225  0000000000000000  INBUFFER: DEFS 81         ; 80 chars plus null for terminal input
               0000000000000000  
               0000000000000000  
               0000000000000000  
@@ -157,90 +159,232 @@ test1.asm:
               0000000000000000  
               0000000000000000  
               00                
-    87                          
-    88                          READ_LINE:
-    89  0276  f5                        PUSH AF
-    90  0277  dde5                      PUSH IX
-    91  0279  c5                        PUSH BC
-    92  027a  dd212502                  LD IX, INBUFFER
-    93  027e  0600                      LD   B,0
-    94                          
-    95                          read_char:
-    96  0280  db00                      IN   A,(TERMINAL_PORT)
-    97  0282  fe0a                      CP   NEWLINE         ; LF?
-    98  0284  280d                      JR   Z,got_lf        ; Don't store the LF
-    99                          
-   100  0286  dd7700                    LD   (IX+0),A        ; Store character
-   101  0289  dd23                      INC  IX              ; Advance write pointer
-   102  028b  04                        INC  B               ; Increase character count
-   103                          
-   104  028c  78                        LD   A,B
-   105  028d  fe50                      CP   INBUFFER_SIZE
-   106  028f  2808                      JR   Z,buffer_full
-   107  0291  18ed                      JR   read_char
-   108                          
-   109                          got_lf:
-   110  0293  dd360000                  LD   (IX+0),NULL     ; Terminate string with null
-   111  0297  1804                      JR   done_read_line
-   112                          
-   113                          buffer_full:
-   114  0299  dd36ff00                  LD   (IX-1),NULL     ; buffer full, terminate with null anyway
-   115                          
-   116                          done_read_line:
-   117  029d  3e01                      LD A, 0x01
-   118  029f  320002                    LD (INPUTFLAG), A      ; Set flag we have data
-   119  02a2  c1                        POP BC
-   120  02a3  dde1                      POP IX
-   121  02a5  f1                        POP AF
-   122  02a6  c9                        RET                  ; INBUFFER contains string terminated by NULL
-   123                          
-   124                          ;**********************************************************
-   125                          ;****** Subroutine: PROCESS_LINE **************************
-   126                          ;* Retrieves and tests terminal lines *********************
-   127                          ;* If prefixed by '#', treats as Command
-   128                          ;* Else, just echos the line to the terminal
-   129                          ;**********************************************************
-   130                          PROCESS_LINE:
-   131                                  ; Test for monitor command, if so, call monitor handler
-   132                                  ; otherwise no need to do anything
-   133  02a7  f5                        PUSH AF
-   134  02a8  dde5                      PUSH IX
-   135  02aa  c5                        PUSH BC
-   136  02ab  dd212502                  LD IX, INBUFFER
-   137  02af  dd7e00                    LD A, (IX+0) ; Get first character from input buffer
-   138                                  ; Check for command (TBD)
-   139                          
-   140                          PROCESS_LINE_DONE:
-   141  02b2  cdba02                    CALL PRINT_LINE
-   142  02b5  c1                        POP BC
-   143  02b6  dde1                      POP IX
-   144  02b8  f1                        POP AF
-   145  02b9  c9                        RET
-   146                          
-   147                          
-   148                          ;***********************************************************
-   149                          ;******** Subroutine: PRINT_LINE ***************************
-   150                          ;*** IX: Input - points to buffer
-   151                          ;*** IY: points to outbut buffer
-   152                          ;*** Processes input string until NULL char
-   153                          ;*** Writes to TERMINAL_OUT and ends line with NL char
-   154                          ;***********************************************************
-   155                          PRINT_LINE:
-   156  02ba  f5                        PUSH AF
-   157  02bb  dde5                      PUSH IX
-   158  02bd  dd212502                  LD IX, INBUFFER
-   159                          L_PRINT_LINE:
-   160  02c1  dd7e00                    LD A, (IX+0)
-   161  02c4  fe00                      CP NULL         ; End of string?
-   162  02c6  cacf02                    JP Z, DONE_PRINT_LINE
-   163  02c9  d300                      OUT (TERMINAL_PORT), A
-   164  02cb  dd23                      INC IX
-   165  02cd  18f2                      JR L_PRINT_LINE         ; Loop
-   166                          DONE_PRINT_LINE:                ; Finish by writing a NL to terminal
-   167  02cf  3e0a                      LD A, NEWLINE
-   168  02d1  d300                      OUT (TERMINAL_PORT), A
-   169  02d3  dde1                      POP IX
-   170  02d5  f1                        POP AF
-   171  02d6  c9                        RET
-   172                          
-   173                          
+    89                          
+    90                          READ_LINE:
+    91  0276  f5                        PUSH AF
+    92  0277  dde5                      PUSH IX
+    93  0279  c5                        PUSH BC
+    94  027a  dd212502                  LD IX, INBUFFER
+    95  027e  0600                      LD   B,0
+    96                          
+    97                          read_char:
+    98  0280  db00                      IN   A,(TERMINAL_PORT)
+    99  0282  fe0a                      CP   NEWLINE         ; LF?
+   100  0284  280d                      JR   Z,got_lf        ; Don't store the LF
+   101                          
+   102  0286  dd7700                    LD   (IX+0),A        ; Store character
+   103  0289  dd23                      INC  IX              ; Advance write pointer
+   104  028b  04                        INC  B               ; Increase character count
+   105                          
+   106  028c  78                        LD   A,B
+   107  028d  fe50                      CP   INBUFFER_SIZE
+   108  028f  2808                      JR   Z,buffer_full
+   109  0291  18ed                      JR   read_char
+   110                          
+   111                          got_lf:
+   112  0293  dd360000                  LD   (IX+0),NULL     ; Terminate string with null
+   113  0297  1804                      JR   done_read_line
+   114                          
+   115                          buffer_full:
+   116  0299  dd36ff00                  LD   (IX-1),NULL     ; buffer full, terminate with null anyway
+   117                          
+   118                          done_read_line:
+   119  029d  3e01                      LD A, 0x01
+   120  029f  320002                    LD (INPUTFLAG), A      ; Set flag we have data
+   121  02a2  c1                        POP BC
+   122  02a3  dde1                      POP IX
+   123  02a5  f1                        POP AF
+   124  02a6  c9                        RET                  ; INBUFFER contains string terminated by NULL
+   125                          
+   126                          ;**********************************************************
+   127                          ;****** Subroutine: PROCESS_LINE **************************
+   128                          ;* Retrieves and tests terminal lines *********************
+   129                          ;* If prefixed by '#', treats as Command
+   130                          ;* Else, just echos the line to the terminal
+   131                          ;**********************************************************
+   132                          PROCESS_LINE:
+   133                                  ; Test for monitor command, if so, call monitor handler
+   134                                  ; otherwise no need to do anything
+   135  02a7  f5                        PUSH AF
+   136  02a8  dde5                      PUSH IX
+   137  02aa  c5                        PUSH BC
+   138  02ab  dd212502                  LD IX, INBUFFER
+   139  02af  dd7e00                    LD A, (IX+0) ; Get first character from input buffer
+   140                                  ; Check for command (TBD)
+   141                                  ; Consider implementing a jump table with RST p instructions
+   142                                  ; to vector to a Command service routine
+   143                          
+   144                          PROCESS_LINE_DONE:
+   145  02b2  cdba02                    CALL PRINT_LINE
+   146  02b5  c1                        POP BC
+   147  02b6  dde1                      POP IX
+   148  02b8  f1                        POP AF
+   149  02b9  c9                        RET
+   150                          
+   151                          
+   152                          ;***********************************************************
+   153                          ;******** Subroutine: PRINT_LINE ***************************
+   154                          ;*** IX: Input - points to buffer
+   155                          ;*** IY: points to outbut buffer
+   156                          ;*** Processes input string until NULL char
+   157                          ;*** Writes to TERMINAL_OUT and ends line with NL char
+   158                          ;***********************************************************
+   159                          PRINT_LINE:
+   160  02ba  f5                        PUSH AF
+   161  02bb  dde5                      PUSH IX
+   162  02bd  dd212502                  LD IX, INBUFFER
+   163                          L_PRINT_LINE:
+   164  02c1  dd7e00                    LD A, (IX+0)
+   165  02c4  fe00                      CP NULL         ; End of string?
+   166  02c6  cacf02                    JP Z, DONE_PRINT_LINE
+   167  02c9  d300                      OUT (TERMINAL_PORT), A
+   168  02cb  dd23                      INC IX
+   169  02cd  18f2                      JR L_PRINT_LINE         ; Loop
+   170                          DONE_PRINT_LINE:                ; Finish by writing a NL to terminal
+   171  02cf  3e0a                      LD A, NEWLINE
+   172  02d1  d300                      OUT (TERMINAL_PORT), A
+   173  02d3  dde1                      POP IX
+   174  02d5  f1                        POP AF
+   175  02d6  c9                        RET
+   176                          
+   177                          ;***********************************************************
+   178                          ;************* Subroutine: PUSH_INPUT **********************
+   179                          ;*** Pushes address on input queue
+   180                          ;*** IY = Address to be pushed
+   181                          ;***********************************************************
+   182                          
+   183                          
+   184                          ;***********************************************************
+   185                          ;************* Subroutine: POP_INPUT **********************
+   186                          ;*** Pops address off input queue
+   187                          ;*** IY = returned address
+   188                          ;***********************************************************
+   189                          
+   190                          
+   191                          ;***********************************************************
+   192                          ;******** Input Queue ***************************
+   193                          ;*** Contains 2-byte pointers to the line in the Heap
+   194                          ;*** Queue grows low to high
+   195                          ;*** Subroutines manage pushing and popping
+   196                          ;*** addresses from the queue
+   197                          ;*** Limited to 10 lines (2-byte addresses)
+   198                          ;***********************************************************
+   199  02d7  da02              IQPTR:          DW      INPUT_QUEUE     ; Initialized to poiint to input queue
+   200  02d9  00                IQCNT:          DB      0               ; Count of items in queue
+   201  02da  0000000000000000  INPUT_QUEUE:    DEFS    2 * IQSIZE      ; limit to 10 addresses
+              0000000000000000  
+              00000000          
+   202                          
+   203                          
+   204                          
+   205                          ;***********************************************************
+   206                          ;******** String Heap ***************************
+   207                          ;*** All strings are terminated by NULL
+   208                          ;*** Heap grows continuously
+   209                          ;*** Strings are all 80 chars + Null
+   210                          ;*** Used for queuing input lines from terminal
+   211                          ;*** The heap is sized to 10 items max
+   212                          ;***********************************************************
+   213  02ee  0000000000000000  STRING_HEAP: DEFS (INBUFFER_SIZE + 1) * IQSIZE
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000000000000000  
+              0000              
+   214                          

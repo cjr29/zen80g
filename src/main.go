@@ -103,7 +103,6 @@ func main() {
 	status := tview.NewTextView().
 		SetTextAlign(tview.AlignLeft).
 		SetScrollable(true)
-	status.SetBorder(true).SetTitle("Terminal Output")
 	status.SetBackgroundColor(gray)
 	terminalOutput := &terminalOutputWriter{status: status}
 	terminalController.SetTerminalOutputHandler(terminalOutput.WriteCharacter)
@@ -112,23 +111,27 @@ func main() {
 	}
 
 	terminalInput := tview.NewInputField().
-		SetLabel("$> ").
-		SetPlaceholder("Enter commands or text for the terminal. Type #reset, #step, #run, or !int for special commands.")
+		SetLabel("> ")
 	terminalInput.SetLabelStyle(
 		terminalInput.GetLabelStyle().Background(gray),
 	)
 	terminalInput.SetLabelColor(tcell.ColorYellow)
-	terminalInput.SetBorder(true).SetTitle("Terminal Input")
-	terminalInput.SetPlaceholderTextColor(tcell.ColorWhite)
 	terminalInput.SetBackgroundColor(gray)
-	terminalInput.SetFieldBackgroundColor(tcell.ColorWhite)
-	terminalInput.SetFieldTextColor(gray)
+	terminalInput.SetFieldBackgroundColor(gray)
+	terminalInput.SetFieldTextColor(tcell.ColorWhite)
+	terminalPane := tview.NewFlex().
+		SetDirection(tview.FlexRow).
+		AddItem(status, 0, 1, false).
+		AddItem(terminalInput, 1, 0, true)
+	terminalPane.SetBorder(true).SetTitle("Terminal")
+	terminalPane.SetBackgroundColor(gray)
 	terminalInput.SetDoneFunc(func(key tcell.Key) {
 		if key != tcell.KeyEnter {
 			return
 		}
 		inputLine := terminalInput.GetText()
-		// appendStatus(status, inputLine) // Echo input to status window
+		terminalOutput.WriteInputLine(inputLine)
+		terminalInput.SetText("")
 		// Check for special commands
 		command := strings.TrimSpace(inputLine)
 		switch command {
@@ -163,8 +166,6 @@ func main() {
 		default:
 			terminalController.QueueTerminalLine(inputLine)
 		}
-		// Clear the input field after pressing Enter
-		terminalInput.SetText("")
 	})
 
 	pages := tview.NewPages()
@@ -497,9 +498,9 @@ func main() {
 	buttons.SetBackgroundColor(gray)
 	buttons.SetBorder(true).SetTitle("Commands")
 
-	// Create tview grid layout for the main page. The grid has 7 rows and 3 columns.
-	// The first row is for the buttons form, the second row is for the status text view,
-	// and the third row is for the terminal input field. The first column is for the processor
+	// Create tview grid layout for the main page. The grid has 3 rows and 3 columns.
+	// The first row is for the buttons form, the second row is for the processor views,
+	// and the third row is for the terminal pane. The first column is for the processor
 	// memory text view, the second column is for the registers text view, and the third column
 	// is for the stack text view.
 	contentGrid := tview.NewGrid().
@@ -519,13 +520,12 @@ func main() {
 		AddItem(stack, 0, 2, 1, 1, 0, 100, true)
 
 	grid := tview.NewGrid().
-		SetRows(7, 0, 10, 5).
+		SetRows(7, 0, 15).
 		SetColumns(75, 32, -4).
 		SetBorders(true).
 		AddItem(buttons, 0, 0, 1, 3, 0, 0, true).
 		AddItem(contentGrid, 1, 0, 1, 3, 0, 0, false).
-		AddItem(status, 2, 0, 1, 3, 0, 0, false).
-		AddItem(terminalInput, 3, 0, 1, 3, 0, 0, true)
+		AddItem(terminalPane, 2, 0, 1, 3, 0, 0, true)
 
 	grid.SetBackgroundColor(gray)
 	contentGrid.SetBackgroundColor(gray)

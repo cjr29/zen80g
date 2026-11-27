@@ -133,6 +133,20 @@ func (w *terminalOutputWriter) WriteCharacter(character uint8) {
 	w.scrollPending.Store(true)
 }
 
+func (w *terminalOutputWriter) WriteInputLine(line string) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	text := w.status.GetText(true)
+	if len(text) > 0 && text[len(text)-1] != '\n' {
+		_, _ = w.status.Write([]byte{'\n'})
+	}
+	_, _ = fmt.Fprintf(w.status, "> %s\n", line)
+	w.previousWasCarriageReturn = false
+	w.status.ScrollToEnd()
+	w.scrollPending.Store(true)
+}
+
 func (w *terminalOutputWriter) TakeScrollRequest() bool {
 	return w.scrollPending.Swap(false)
 }

@@ -9,10 +9,13 @@ INTERRUPT_VECTOR_TABLE:         EQU 0X0100
 INTERRUPT_VECTOR_TABLE_MSB:     EQU 0x01
 TERMINAL_PORT                   EQU 0x00
 NULL:                           EQU 0x00
+EOS:                            EQU 0x00
 HASH:                           EQU '#'
 NEWLINE:                        EQU 0x0A
 RIGHT_ANGLE_BRACKET             EQU '>'
 SPACE:                          EQU ' '
+INBUFFER_SIZE                   EQU 80
+IQSIZE                          EQU 10  ; input queue size, 10 words
 
 ;****************************************************
 ;********************** ENTRY ***********************
@@ -58,7 +61,7 @@ WAIT:
         NOP
         LD A, (INPUTFLAG)
         OR A                   ; Z=1 if INPUTFLAG is zero
-        CALL NZ, PROCESS_LINE
+        ;CALL NZ, PROCESS_LINE ; TBD - Need input queue before enabling
         LD A, 0
         LD (INPUTFLAG), A       ; Clear terminal data flag
         JP WAIT                 ; Keep waiting
@@ -72,6 +75,7 @@ IHDLR_TERMINAL:
         DI
         PUSH AF
         CALL READ_LINE      ; Read the characters from the terminal
+        CALL PRINT_LINE     ; Echo the line to the terminal
         POP AF
         EI
         RETI
@@ -79,11 +83,10 @@ IHDLR_TERMINAL:
 ;***********************************************************
 ;******** Subroutine: READ_LINE ***************************
 ;*** Reads chars from terminal buffer into INBUFFER
-;*** Terminates string with NULL
+;*** Terminates string with EOS
 ;*** Max line size is 80 chars
 ;***********************************************************
-INBUFFER_SIZE EQU 80
-INBUFFER: DEFS 81         ; 80 chars plus null for terminal input
+INBUFFER: DEFS 81         ; 80 chars plus EOS for terminal input
 
 READ_LINE:
         PUSH AF
@@ -107,11 +110,11 @@ read_char:
         JR   read_char
 
 got_lf:
-        LD   (IX+0),NULL     ; Terminate string with null
+        LD   (IX+0),EOS     ; Terminate string with EOS
         JR   done_read_line
 
 buffer_full:
-        LD   (IX-1),NULL     ; buffer full, terminate with null anyway
+        LD   (IX-1),EOS     ; buffer full, terminate with EOS anyway
 
 done_read_line:
         LD A, 0x01
@@ -119,7 +122,7 @@ done_read_line:
         POP BC
         POP IX
         POP AF
-        RET                  ; INBUFFER contains string terminated by NULL
+        RET                  ; INBUFFER contains string terminated by EOS
 
 ;**********************************************************
 ;****** Subroutine: PROCESS_LINE **************************
@@ -151,7 +154,7 @@ PROCESS_LINE_DONE:
 ;******** Subroutine: PRINT_LINE ***************************
 ;*** IX: Input - points to buffer
 ;*** IY: points to outbut buffer
-;*** Processes input string until NULL char
+;*** Processes input string until EOS char
 ;*** Writes to TERMINAL_OUT and ends line with NL char
 ;***********************************************************
 PRINT_LINE:
@@ -160,7 +163,7 @@ PRINT_LINE:
         LD IX, INBUFFER
 L_PRINT_LINE:
         LD A, (IX+0)
-        CP NULL         ; End of string?
+        CP EOS         ; End of string?
         JP Z, DONE_PRINT_LINE
         OUT (TERMINAL_PORT), A
         INC IX
@@ -172,3 +175,40 @@ DONE_PRINT_LINE:                ; Finish by writing a NL to terminal
         POP AF
         RET
 
+;***********************************************************
+;************* Subroutine: PUSH_INPUT **********************
+;*** Pushes address on input queue
+;*** IY = Address to be pushed
+;***********************************************************
+
+
+;***********************************************************
+;************* Subroutine: POP_INPUT **********************
+;*** Pops address off input queue
+;*** IY = returned address
+;***********************************************************
+
+
+;***********************************************************
+;******** Input Queue ***************************
+;*** Contains 2-byte pointers to the line in the Heap
+;*** Queue grows low to high
+;*** Subroutines manage pushing and popping
+;*** addresses from the queue
+;*** Limited to 10 lines (2-byte addresses)
+;***********************************************************
+IQPTR:          DW      INPUT_QUEUE     ; Initialized to poiint to input queue
+IQCNT:          DB      0               ; Count of items in queue
+INPUT_QUEUE:    DEFS    2 * IQSIZE      ; limit to 10 addresses
+
+
+
+;***********************************************************
+;******** String Heap ***************************
+;*** All strings are terminated by EOS
+;*** Heap grows continuously
+;*** Strings are all 80 chars + EOS
+;*** Used for queuing input lines from terminal
+;*** The heap is sized to 10 items max
+;***********************************************************
+STRING_HEAP: DEFS (INBUFFER_SIZE + 1) * IQSIZE
